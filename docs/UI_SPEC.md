@@ -1,8 +1,8 @@
 # UI_SPEC.md — Đặc tả giao diện GUI Logic Analyzer (TV3)
 
 Tài liệu cho người viết GUI và AI agent. Giao thức: `spec/protocol.md` (nguồn sự thật duy nhất).
-Màu, kích thước, stylesheet: `software/ui/theme.py` (không ghi màu/kích thước trực tiếp ở nơi khác).
-Prototype tham khảo: `software/ui/proto.py` (phiên bản v3). Ảnh tham chiếu bố cục: `docs/ui_reference/` (chỉ dùng nội bộ; dùng tên và logo riêng cho phần mềm của nhóm).
+Màu, kích thước, stylesheet: `software/gui/theme.py` (không ghi màu/kích thước trực tiếp ở nơi khác).
+Prototype tham khảo: `software/gui/proto.py` (phiên bản v3). Ảnh tham chiếu bố cục: `docs/ui_reference/` (chỉ dùng nội bộ; dùng tên và logo riêng cho phần mềm của nhóm).
 
 ## 1. Mục tiêu
 Giao diện nền tối, kiểu phần mềm phân tích logic phổ biến: các hàng kênh xếp chồng, trục thời gian chung, giải mã UART hiện ngay trên sóng. Thiết bị chỉ chụp một lần 32768 mẫu (không streaming).

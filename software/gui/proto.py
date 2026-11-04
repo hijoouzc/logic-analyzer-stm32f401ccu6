@@ -1,6 +1,6 @@
-"""software/ui/proto.py
+"""software/gui/proto.py
 Prototype GUI để đánh giá độ giống với ảnh tham chiếu (Saleae Logic 2).
-Chạy: python3 -m software.ui.proto v3 out.png  hoặc  python3 software/ui/proto.py v3 out.png
+Chạy: python3 -m software.gui.proto v3 out.png  hoặc  python3 software/gui/proto.py v3 out.png
 """
 import os
 import sys
@@ -20,7 +20,7 @@ from PyQt5 import QtWidgets, QtCore, QtGui
 import pyqtgraph as pg
 
 try:
-    from software.ui import theme as T
+    from software.gui import theme as T
 except ImportError:
     import theme as T
 

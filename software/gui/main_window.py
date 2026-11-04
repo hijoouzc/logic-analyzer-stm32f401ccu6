@@ -23,7 +23,7 @@ os.environ.setdefault("QT_LOGGING_RULES", "qt.qpa.wayland=false")
 from PyQt5 import QtCore, QtGui, QtWidgets
 import pyqtgraph as pg
 
-from software.ui import theme as T
+from software.gui import theme as T
 from software.gui.logic_client import LogicAnalyzerClient
 from software.gui.waveform_widget import WaveformWidget
 from software.decoders.uart_decoder import UARTDecoder

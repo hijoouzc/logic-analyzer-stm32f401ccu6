@@ -17,7 +17,7 @@ import numpy as np
 from PyQt5 import QtCore, QtGui, QtWidgets
 import pyqtgraph as pg
 
-from software.ui import theme as T
+from software.gui import theme as T
 
 DEFAULT_CHANNEL_NAMES = [f"Channel {i}" for i in range(8)]
 
