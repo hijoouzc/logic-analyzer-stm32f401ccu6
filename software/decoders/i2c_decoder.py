@@ -72,10 +72,10 @@ class I2CDecoder:
                     "desc": desc,
                     "ack": True,
                     "rw": "",
-                    "start_sample": i + 1,
-                    "stop_sample": i + 1,
-                    "start_time_s": (i + 1) / self.sample_rate,
-                    "stop_time_s": (i + 1) / self.sample_rate
+                    "start_sample": max(0, i - 1),
+                    "stop_sample": min(end_idx - 1, i + 4),
+                    "start_time_s": max(0, i - 1) / self.sample_rate,
+                    "stop_time_s": min(end_idx - 1, i + 4) / self.sample_rate
                 })
                 i += 1
                 continue
@@ -92,10 +92,10 @@ class I2CDecoder:
                         "desc": "STOP",
                         "ack": True,
                         "rw": "",
-                        "start_sample": i + 1,
-                        "stop_sample": i + 1,
-                        "start_time_s": (i + 1) / self.sample_rate,
-                        "stop_time_s": (i + 1) / self.sample_rate
+                        "start_sample": max(0, i - 1),
+                        "stop_sample": min(end_idx - 1, i + 4),
+                        "start_time_s": max(0, i - 1) / self.sample_rate,
+                        "stop_time_s": min(end_idx - 1, i + 4) / self.sample_rate
                     })
                     in_transaction = False
                     expect_address = False

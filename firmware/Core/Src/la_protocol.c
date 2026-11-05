@@ -23,9 +23,9 @@
 #endif
 
 #define RX_RING_BUF_SIZE (64U)
-static uint8_t g_rx_ring[RX_RING_BUF_SIZE];
-static uint32_t g_rx_head = 0;
-static uint32_t g_rx_tail = 0;
+static volatile uint8_t  g_rx_ring[RX_RING_BUF_SIZE];
+static volatile uint32_t g_rx_head = 0;
+static volatile uint32_t g_rx_tail = 0;
 
 /* Buffer tĩnh truyền Header, Control, Footer để bảo vệ con trỏ truyền DMA/USB */
 static uint8_t g_tx_ctrl_buf[7];
@@ -57,6 +57,8 @@ static bool wait_cdc_tx_ready(uint32_t timeout_ms)
     uint32_t start = HAL_GetTick();
     while (hcdc->TxState != 0) {
         if ((HAL_GetTick() - start) >= timeout_ms) {
+            /* Cưỡng bức reset TxState = 0 theo đúng mục 4.4 protocol.md */
+            hcdc->TxState = 0;
             return false; /* Hết hạn timeout watchdog */
         }
     }
@@ -82,6 +84,12 @@ static bool send_cdc_packet(const uint8_t *data, uint16_t len, uint32_t timeout_
     /* 2. Thử gửi dữ liệu qua USB */
     while (CDC_Transmit_FS((uint8_t*)data, len) != 0U) { /* USBD_OK == 0 */
         if ((HAL_GetTick() - start) >= timeout_ms) {
+#if defined(__USB_CDC_H) || defined(USBD_CDC_H) || defined(__USBD_CDC_H)
+            extern USBD_HandleTypeDef hUsbDeviceFS;
+            if (hUsbDeviceFS.pClassData != NULL) {
+                ((USBD_CDC_HandleTypeDef*)hUsbDeviceFS.pClassData)->TxState = 0;
+            }
+#endif
             return false;
         }
     }
@@ -110,30 +118,42 @@ void la_protocol_send_control_frame(uint8_t rsp_code, uint8_t d1, uint8_t d2, ui
 
 void la_protocol_process_rx_bytes(const uint8_t *data, uint32_t len)
 {
-    /* Đang bận truyền dữ liệu -> Khóa nhận lệnh */
+    /* Đang bận truyền dữ liệu -> Khóa nhận lệnh (drop toàn bộ byte nhận được) */
     if (la_core_get_state() == LA_STATE_TRANSFERRING) {
         return;
     }
 
-    /* Đẩy dữ liệu vào ring buffer */
+    /* Đẩy dữ liệu vào ring buffer (An toàn gọi trong ISR CDC_Receive_FS) */
     for (uint32_t i = 0; i < len; i++) {
-        uint32_t next = (g_rx_head + 1) % RX_RING_BUF_SIZE;
+        uint32_t next = (g_rx_head + 1U) % RX_RING_BUF_SIZE;
         if (next != g_rx_tail) {
             g_rx_ring[g_rx_head] = data[i];
             g_rx_head = next;
         }
     }
 
+    /* Nếu hàm được gọi trực tiếp từ Thread mode (ví dụ unit test), xử lý luôn */
+    if (__get_IPSR() == 0U) {
+        la_protocol_process();
+    }
+}
+
+void la_protocol_process(void)
+{
+    if (la_core_get_state() == LA_STATE_TRANSFERRING) {
+        return;
+    }
+
     /* Quét trượt tìm khung 5 Bytes bắt đầu bằng 0xA5 */
-    while (((g_rx_head + RX_RING_BUF_SIZE - g_rx_tail) % RX_RING_BUF_SIZE) >= 5) {
-        if (g_rx_ring[g_rx_tail] != 0xA5) {
-            g_rx_tail = (g_rx_tail + 1) % RX_RING_BUF_SIZE;
+    while (((g_rx_head + RX_RING_BUF_SIZE - g_rx_tail) % RX_RING_BUF_SIZE) >= 5U) {
+        if (g_rx_ring[g_rx_tail] != 0xA5U) {
+            g_rx_tail = (g_rx_tail + 1U) % RX_RING_BUF_SIZE;
             continue;
         }
 
         /* Lấy ra 5 bytes */
         uint8_t cmd[5];
-        for (int i = 0; i < 5; i++) {
+        for (uint32_t i = 0; i < 5U; i++) {
             cmd[i] = g_rx_ring[(g_rx_tail + i) % RX_RING_BUF_SIZE];
         }
 
@@ -142,25 +162,25 @@ void la_protocol_process_rx_bytes(const uint8_t *data, uint32_t len)
         if (cmd[4] != expected_csum) {
             la_protocol_send_control_frame(LA_ERR_CHECKSUM, cmd[1], cmd[2], cmd[3]);
             /* Bỏ đúng 1 byte 0xA5 đầu tiên rồi quét tiếp */
-            g_rx_tail = (g_rx_tail + 1) % RX_RING_BUF_SIZE;
+            g_rx_tail = (g_rx_tail + 1U) % RX_RING_BUF_SIZE;
             continue;
         }
 
         /* Hợp lệ -> Xử lý lệnh */
-        g_rx_tail = (g_rx_tail + 5) % RX_RING_BUF_SIZE;
+        g_rx_tail = (g_rx_tail + 5U) % RX_RING_BUF_SIZE;
         uint8_t cmd_id   = cmd[1];
         uint8_t rate_idx = cmd[2];
         uint8_t trig_cfg = cmd[3];
 
-        if (cmd_id == 0x03) { /* PING */
+        if (cmd_id == 0x03U) { /* PING */
             la_protocol_send_control_frame(LA_RSP_PONG, 0x01, 0x00, 0x00);
-        } else if (cmd_id == 0x02) { /* ABORT */
+        } else if (cmd_id == 0x02U) { /* ABORT */
             la_core_abort();
             la_protocol_send_control_frame(LA_RSP_ABORTED, 0x00, 0x00, 0x00);
-        } else if (cmd_id == 0x01) { /* START */
-            if (rate_idx > 8) {
+        } else if (cmd_id == 0x01U) { /* START */
+            if (rate_idx > 8U) {
                 la_protocol_send_control_frame(LA_ERR_INVALID_RATE, cmd_id, rate_idx, trig_cfg);
-            } else if (((trig_cfg >> 4) > 7) || ((trig_cfg & 0x0F) > 2)) {
+            } else if (((trig_cfg >> 4) > 7U) || ((trig_cfg & 0x0FU) > 2U)) {
                 la_protocol_send_control_frame(LA_ERR_INVALID_TRIG, cmd_id, rate_idx, trig_cfg);
             } else {
                 if (!la_core_start_capture(rate_idx, trig_cfg)) {

@@ -1,101 +1,125 @@
-# UI_SPEC.md — Đặc tả giao diện GUI Logic Analyzer (TV3)
+# UI_SPEC.md — Đặc tả giao diện GUI Logic Analyzer (TV3 & GUI Team)
 
-Tài liệu cho người viết GUI và AI agent. Giao thức: `spec/protocol.md` (nguồn sự thật duy nhất).
-Màu, kích thước, stylesheet: `software/gui/theme.py` (không ghi màu/kích thước trực tiếp ở nơi khác).
-Prototype tham khảo: `software/gui/proto.py` (phiên bản v3). Ảnh tham chiếu bố cục: `docs/ui_reference/` (chỉ dùng nội bộ; dùng tên và logo riêng cho phần mềm của nhóm).
+Tài liệu chuẩn hóa thiết kế giao diện người dùng (Desktop GUI) cho hệ thống Logic Analyzer 8 kênh 6 MHz (STM32F401CCU6).
+* **Giao thức phần cứng STM32:** [`spec/protocol.md`](../spec/protocol.md) (Nguồn chân lý duy nhất cho khung truyền).
+* **Mã nguồn Stylesheet dự án:** [`software/gui/theme.py`](../software/gui/theme.py) (SSoT về bảng màu và QSS trong code, không hardcode màu nơi khác).
+* **Wireframe bố cục tham chiếu:** [`docs/ui_reference/wireframe.html`](ui_reference/wireframe.html).
 
-## 1. Mục tiêu
-Giao diện nền tối, kiểu phần mềm phân tích logic phổ biến: các hàng kênh xếp chồng, trục thời gian chung, giải mã UART hiện ngay trên sóng. Thiết bị chỉ chụp một lần 32768 mẫu (không streaming).
+---
 
-## 2. Bố cục (cửa sổ logic 1280×860; mọi kích thước dưới đây là px logic)
+## 1. Mục tiêu Thiết kế
+Giao diện Dark Theme tối giản, hiện đại và tập trung cao độ cho kỹ sư hệ thống nhúng:
+* Các hàng kênh xếp chồng độc lập, trục thời gian đồng bộ liên kết.
+* Giải mã giao thức (UART / I2C / SPI) hiển thị dưới dạng bong bóng (Inline Annotation Bubbles) ngay trên track sóng.
+* Thao tác chuột mượt mà: Cuộn chuột để Zoom tại vị trí con trỏ, kéo chuột trái/phải để Pan timeline.
+* Thiết bị hoạt động dạng Single Shot (Bắt 32.768 mẫu / lần, truyền qua USB CDC).
+
+---
+
+## 2. Bố cục Tổng thể (Layout Architecture)
+
 ```
-+----------------------------------------------------------------------+
-| File  Edit  Capture  Measure  View  Help                (menu trắng) |
-+------------------------------------+------------------+--------------+
-| nhãn | thước thời gian (0=trigger) | Analyzers   [+]  |  [Start]     |
-| D0   | sóng CH0 + ô giải mã        | Async Serial  ✓  |  [icon]      |
-| D1   | sóng CH1                    | > Trigger View ✕ |  [icon]      |
-| ...  | ... (H/L ở mép trái)        | Data ✓           |  [icon]      |
-| D7   | sóng CH7                    | [Type to search] |              |
-|      |                             | bảng Data        |              |
-+------+-----------------------------+------------------+--------------+
-| Session 0 | Session 1 | +                              128 µs ^      |
-+----------------------------------------------------------------------+
++-----------------------------------------------------------------------------------------+
+| Top Bar: Window Title + Menu Bar (File, Edit, Capture, Measure, View, Help)    (~36 px) |
++-------------------------------------------------------------+-----------------+---------+
+| Waveform & Channels Canvas                                  | Drawer Panel    | Rail    |
+| +---------------------+-----------------------------------+ | (Width: 310 px) | (56 px) |
+| | Cột nhãn (180 px)   | Thước thời gian (+0.1ms, +0.2ms)  | |                 |         |
+| | [D0] Channel 0      | ──[ 0x55 ]─────────[ 0xAA ]───────| | Analyzers   [+] | [Play]  |
+| |  ● Async Serial     |                                   | | Async Serial  ✓ |  (Ø 48) |
+| | [D1] Channel 1      | ───────────────────────────────── | | > Device Set  ✕ |         |
+| |  ● I2C - SDA        |                                   | | > Measure     ✕ | [Analy] |
+| | [D2..D7]            | ... (Đường phân cách mảnh)        | |                 |         |
+| |                     |                                   | | Data          ✓ | [Meas]  |
+| |                     |                                   | | [Type to search]|         |
+| |                     |                                   | | Type|Start|Dur  | [Sett]  |
+| +---------------------+-----------------------------------+ | |0x55|1.2ms|... |         |
++-------------------------------------------------------------+-----------------+---------+
+| Footer Bar: Tabs [Session 0] [Session 1] [+]                      Zoom Level: [128 µs ^]|
++-----------------------------------------------------------------------------------------+
 ```
 
-| Vùng | Kích thước | Ghi chú |
+### Kích thước & Tỉ lệ Pixel Logic (Chuẩn màn hình 1280×860 trở lên):
+| Thành phần | Kích thước | Mô tả & Trách nhiệm |
 |---|---|---|
-| Cột nhãn | 194 px | dải màu 4 px ở mép trái |
-| Panel phải (Analyzers/Data) | 313 px | |
-| Dải icon phải | 65 px | nút Start tròn ở trên cùng, Ø 50 px |
-| Thước thời gian | 32 px | |
-| Thanh dưới (tab Session + mức zoom) | 42 px | |
-| Hàng kênh | **giãn lấp đầy** vùng sóng | xem mục 3 |
-| Hàng có analyzer | 1.45 × hàng thường | |
+| **Activity Rail (Phải cùng)** | `56 px` | Nền `#3a3a3e`, viền trái `1px solid #57575e`, chứa nút tròn Start Ø 48px xanh + các switcher dọc 56×56px |
+| **Drawer Panel (Phải)** | `310 px` | Nền `#1b1b1c`, viền trái `1px solid #57575e`, chứa thẻ `#2c2c2e`, Analyzers, Measurements và bảng Data Table `#141415` |
+| **Cột nhãn kênh (Trái)** | `180 px` | Nền `#1b1b1c`, viền phải `1px solid #57575e`, chứa badge kênh `D0`..`D7`, tên kênh và chip protocol |
+| **Vùng sóng (Waveform Plot)** | Co giãn tự do | Nền `#1b1b1c`, vạch phân cách track `#57575e`, lưới nét đứt `#49494d` |
+| **Thước thời gian (Timeline)** | `32 px` | Nền `#0f0f10`, viền dưới `1px solid #57575e`, hiển thị mốc thời gian nanosecond/microsecond/millisecond |
+| **Thanh dưới (Session Tabs)** | `36 px` | Nền `#1b1b1c`, viền trên `1px solid #57575e`, quản lý session tabs, trạng thái thiết bị và độ phân giải zoom |
+| **Nút Start / Capture** | Đường kính `48 px` | Nút tròn bo 24px, màu xanh `#00994d` với icon tam giác Play trắng, đặt tại đỉnh Activity Rail |
 
-## 3. Quy tắc hàng kênh
-- Chiều cao hàng thường = (chiều cao vùng sóng) / (7 + 1.45), có tối thiểu 47 px. 8 hàng luôn lấp đầy vùng sóng, không để trống nửa dưới.
-- Mỗi hàng: dải màu theo `CHANNEL_COLORS`; nhãn gồm mã nhỏ có màu ("D0") và tên lớn màu trắng ("Channel 0"); hàng gắn analyzer có thêm chip nhỏ (ô vuông màu + "Async Serial").
-- Sóng số: nét 1 px màu kênh, dạng vuông đúng cạnh (`stepMode`); nhãn **H** và **L** ở mép trái mỗi hàng; vạch ngăn mảnh giữa các hàng.
-- Vạch lưới dọc nét đứt, cách nhau 100 µs (đổi theo zoom).
+---
 
-## 4. Thước thời gian và trigger
-- Mốc tương đối: "+0.1 ms", "+0.2 ms"… Đơn vị tự đổi theo zoom.
-- Mốc 0 tại mẫu trigger (index 6554); mẫu pre-trigger ở phía âm.
-- Vạch dọc màu `TRIGGER_MARKER` tại 0. Với Free-run (Status 0x01), vẫn vẽ vạch nhưng ghi chú "free-run" vì `trig_offset` chỉ mang tính tham khảo.
-- Zoom/pan bằng chuột; các kênh dùng chung trục X.
+## 3. Hệ Thống Màu Chuẩn (Dark Theme Design System)
 
-## 5. Giải mã UART (giai đoạn 1)
-- Chọn kênh, baud mặc định 115200, 8N1.
-- Ô chữ nhật nền `DECODE_UART_BG`, chữ `DECODE_UART_FG`, nằm trên sóng, rộng bằng một ký tự (từ start đến stop bit); nội dung hex (0x54) hoặc ASCII.
-- Chấm trắng nhỏ trên sóng tại tâm mỗi bit dữ liệu.
-- I2C/SPI để giai đoạn 2.
+### 3.1. Màu Nền & Khung Viền:
+* **Canvas Sóng (Waveform Viewport):** `#1b1b1c`
+* **Thước thời gian (Timeline Header):** `#0f0f10`
+* **Thanh công cụ & Drawer Panel:** `#1b1b1c`
+* **Nền hàng Data Table & Terminal:** `#141415`
+* **Thẻ & Ô nhập liệu (Cards & Inputs):** `#2c2c2e`
+* **Đường viền ngăn kênh (Borders):** `#303136`
+* **Đường viền phụ / Vạch track:** `#57575e`
+* **Hover / Selected Row:** `#3a3a3e`
+* **Chữ chính (High Emphasis):** `#ffffff`
+* **Chữ mờ (Medium Emphasis):** `#909091`
+* **Lưới nét đứt (Grid Dash):** `#49494d`
+* **Nền Tooltip / Floating HUD:** `#343438`
+* **Điểm nhấn đang chọn (Selection Highlight):** `#26a3d9`
 
-## 6. Panel phải
-- **Analyzers:** tiêu đề + nút "+"; mỗi analyzer một dòng (ô vuông màu, tên, dấu ✓ xanh). Mục thu gọn "Trigger View" có nút ✕.
-- **Data:** tiêu đề + ✓; ô "Type to search"; bảng 4 cột: ô màu | Type | Start | Duration (không có thanh cuộn ngang).
+### 3.2. Bảng 8 Màu Kênh Kỹ Thuật Số (CH0 – CH7 - Chuẩn Mã Màu Điện Trở):
+```python
+CHANNEL_COLORS = [
+    "#d4d4d4",  # CH0: Silver White
+    "#c79579",  # CH1: Warm Copper
+    "#ff6d7f",  # CH2: Coral / Salmon Red
+    "#ffb45b",  # CH3: Amber Orange
+    "#e8d836",  # CH4: Lemon Yellow
+    "#58c667",  # CH5: Fresh Green
+    "#53a9fd",  # CH6: Sky Blue
+    "#af92fb",  # CH7: Lavender Purple
+]
+```
 
-## 7. Điều khiển capture (khớp lệnh 5 byte)
-- Tốc độ lấy mẫu (RATE_IDX 0..8): 6 MHz, 3 MHz, 2 MHz, 1 MHz, 500 kHz, 200 kHz, 100 kHz, 50 kHz, 10 kHz.
-- Kênh trigger CH0..CH7 + chế độ Free-run / Rising / Falling (TRIG_CFG).
-- Nút Start, Stop/Abort, Check Connection (Ping).
-- Con trỏ đo A/B: kéo được, hiện Δt và tần số = 1/Δt.
+### 3.3. Trigger, Cursors & Bong Bóng Giải Mã (Annotations):
+* **Vạch Trigger dọc:** `#fff06a`
+* **Cờ / Điểm Trigger:** `#f1994b`
+* **Con trỏ đo A / B:** Cursor A `#26a3d9`, Cursor B `#ea5757`
+* **Nút Start (Capture):** `#00994d` (Hover: `#00b140`, Active: `#02992f`)
+* **Nút Abort (Stop):** `#db4c39`
+* **Bong bóng giải mã (Inline Decoded Bubbles):**
+  * Chiều cao `18 px` trên dải decoder phía trên đường sóng.
+  * **UART:** Nền `#d3ccb0`, chữ `#1b1b1c`.
+  * **I2C:** Nền `#4060c0`, chữ `#ffffff`.
+  * **SPI:** Nền `#53a9fd`, chữ `#1b1b1c`.
 
-## 8. Ánh xạ trạng thái UI với giao thức
-| Sự kiện | UI |
-|---|---|
-| Pong `5A A5 04 …` | "Connected (v1.0.0)" màu xanh |
-| Data frame Status 0x00 | Vẽ sóng, đặt vạch trigger |
-| Data frame Status 0x01 | Vẽ sóng, ghi "Free-run" |
-| Data frame Status 0x02 | Cảnh báo "Timeout — không có trigger", vẫn vẽ 32 KB |
-| Control frame 0x05 | "Capture aborted" |
-| NAK 0xE0–0xE3 | Hộp thông báo lỗi theo mã (checksum / rate / trigger / busy) |
-| Quá thời gian chờ | Báo mất kết nối; không gửi lệnh mới cho đến khi xử lý xong |
+---
 
-Trong lúc nhận gói 32776 byte: khóa mọi nút điều khiển.
-Thời gian chờ GUI: T_gui = (16384 + 26214)/fs + 2.0 s + 1.5 s.
+## 4. Typography
+* **Font Family:** `"Roboto", "Segoe UI", "Helvetica Neue", sans-serif`
+* **Font Monospace (Data Table / Measurements / Timeline):** `"Roboto Mono", "DejaVu Sans Mono", monospace`
+* **Tiêu đề kênh (Channel Title):** `13px`, `font-weight: 500`.
+* **Badge kênh (`D0`..`D7`):** `11px`, `font-weight: 700`.
+* **Bảng dữ liệu & Thước đo:** `11px - 12px`, `font-weight: 400`.
+* **Bong bóng ký tự giải mã:** `11px`, `font-weight: 700`.
 
-## 9. Kỹ thuật (PyQt5 + pyqtgraph)
-- Một `PlotWidget`, mỗi kênh cộng độ lệch dọc; hoặc 8 `PlotItem` liên kết `setXLink`. Cột nhãn là các widget có chiều cao khớp từng hàng.
-- Đọc serial trong `QThread`. Xác thực XOR payload trước khi vẽ; sai thì báo lỗi, không vẽ.
-- Bit kênh k của mẫu: `(byte >> k) & 1`.
-- Làm việc độc lập bằng `software/tests/sample_data_1mhz.bin`.
+---
 
-## 10. Đánh giá độ giống ảnh tham chiếu (prototype, thang điểm tự đặt)
-| Phiên bản | Tổng hợp |
-|---|---|
-| v1 (spec đầu tiên) | ~65% |
-| v2 (chỉnh kích thước theo ảnh) | ~77% |
-| v3 (hàng giãn, nhãn, chấm bit, H/L, panel) | **~85%** |
+## 5. Quy Tắc Hiển Thị Sóng & Kênh (Waveform Tracks)
+1. **Co giãn lấp đầy (Dynamic Stretching):** 8 kênh chia đều chiều cao của vùng sóng (mỗi kênh tối thiểu `48 px`), đảm bảo không có khoảng trống thừa bên dưới. Hàng có gắn Protocol Analyzer cao gấp `1.35x` hàng thông thường để chứa bong bóng giải mã.
+2. **Nét vẽ tín hiệu số:** Dùng `stepMode="right"` của pyqtgraph để vẽ xung vuông thẳng góc nét căng (độ dày 1.5px, màu theo kênh).
+3. **Mốc thời gian Trigger:** Mẫu trigger danh định tại index 6554 tương ứng thời gian $t = 0\,\text{s}$. Dữ liệu trước trigger có thời gian âm, sau trigger có thời gian dương.
+4. **Điểm mẫu phần cứng (Hardware Sample Points):** Tự động hiển thị chấm mẫu rời rạc khi người dùng Zoom sâu ($\ge 6\,\text{px/sample}$) và ẩn khi Zoom xa.
 
-Thang điểm gồm màu (histogram), cấu trúc bố cục (SSIM), tỉ lệ vùng và checklist 20 thành phần; chỉ dùng để so sánh các bản. Chạy lại: `python3 proto.py v3 v3.png && python3 compare.py`.
+---
 
-Còn thiếu so với ảnh gốc: hàng thời gian tuyệt đối ("395 ms"), chip giải mã bo góc có viền, một số nút nhỏ (đều không bắt buộc).
-
-## 11. Ngoài phạm vi
-Streaming thời gian thực, plugin analyzer, nhiều giao thức, kênh analog.
-
-## 12. Ưu tiên cho mốc 11/11
-1. Ping + Start + vẽ 8 kênh + vạch trigger + zoom/pan.
-2. Giải mã UART trên sóng.
-3. Con trỏ đo, lưu/mở file, đổi tên/màu kênh.
+## 6. Ánh Xạ Trạng Thái Giao Diện Với Giao Thức Firmware (SSoT)
+Chi tiết khung truyền xem [`spec/protocol.md`](../spec/protocol.md):
+* **Nhận Pong (`5A A5 04 ...`):** Đổi trạng thái kết nối sang xanh `"Connected: STM32F401 (v1.0.0)"`.
+* **Nhận Data Frame (Status `0x00` - Triggered):** Vẽ dạng sóng, đặt vạch trigger vàng cam tại mẫu $t_0 = 0\,\text{s}$.
+* **Nhận Data Frame (Status `0x01` - Free-run):** Vẽ dạng sóng với gốc thời gian $t = 0\,\text{s}$ tại mẫu đầu tiên, đặt vạch `"FREE-RUN"`.
+* **Nhận Data Frame (Status `0x02` - Timeout):** Hiển thị vạch `"TIMEOUT"`, vẫn vẽ đầy đủ 32.768 mẫu thu được.
+* **Nhận NAK (`0xE0` - Checksum, `0xE1` - Rate, `0xE2` - Trigger, `0xE3` - Busy):** Hiển thị hộp thoại cảnh báo chi tiết mã lỗi cho người dùng.
+* **Đang thu thập 32.776 Byte:** Đổi nút tròn Start sang nút vuông Stop màu đỏ (`#db4c39`) hỗ trợ hủy lệnh tức thì (`CMD_ABORT`).

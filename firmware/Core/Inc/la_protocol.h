@@ -25,8 +25,11 @@
 #define LA_ERR_INVALID_TRIG    (0xE2U)
 #define LA_ERR_BUSY            (0xE3U)
 
-/* Nhận và xử lý dòng byte từ USB CDC (gọi trong CDC_Receive_FS) */
+/* Nhận và đẩy dòng byte từ USB CDC vào Ring Buffer (gọi trong CDC_Receive_FS - ISR context) */
 void la_protocol_process_rx_bytes(const uint8_t *data, uint32_t len);
+
+/* Quét Ring Buffer và thực thi lệnh nhận từ PC trong Thread Mode (gọi trong while(1)) */
+void la_protocol_process(void);
 
 /* Gửi khung phản hồi điều khiển 7 Bytes (PONG, ABORT ACK, NAK) */
 void la_protocol_send_control_frame(uint8_t rsp_code, uint8_t d1, uint8_t d2, uint8_t d3);

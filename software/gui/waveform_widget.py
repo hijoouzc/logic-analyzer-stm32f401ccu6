@@ -1,18 +1,18 @@
 #!/usr/bin/env python3
 """software/gui/waveform_widget.py
-Khung vẽ sóng logic 8 kênh (Waveform Viewport) theo chuẩn UI_SPEC.md và proto.py (v3):
-- Cột nhãn bên trái (194 px) với dải màu 4 px, nhãn D0..D7, tên kênh và chip analyzer.
+Khung vẽ sóng logic 8 kênh (Waveform Viewport) theo chuẩn UI_SPEC.md:
+- Cột nhãn bên trái (180 px) với dải màu 4 px, nhãn D0..D7, tên kênh và chip analyzer.
 - Trục thời gian trên cùng (32 px) với mốc tương đối (+0.1 ms, +0.2 ms...), 0 tại Trigger.
-- 8 hàng kênh số co giãn lấp đầy chiều cao (hàng có analyzer = 1.45x hàng thường).
-- Nhãn H và L ở mép trái mỗi hàng sóng, vạch ngăn mảnh giữa các hàng.
-- Vạch lưới dọc nét đứt (dashed grid lines).
-- Vạch Trigger (T-Marker) màu TRIGGER_MARKER tại điểm kích hoạt (mẫu 6554, t = 0).
-- Chú thích giải mã UART trực tiếp trên sóng (ô bo góc màu DECODE_UART_BG, chữ DECODE_UART_FG).
-- Chấm trắng nhỏ tại tâm mỗi bit dữ liệu (bit center dots).
+- 8 track kênh số co giãn lấp đầy chiều cao (track có analyzer = 1.35x track thường).
+- Nền canvas #1b1b1c, đường phân cách mỏng #57575e giữa các track.
+- Dạng sóng số vẽ bằng stepMode="right", màu lấy từ theme.CHANNEL_COLORS.
+- Nhãn H và L ở mép trái mỗi track sóng, bám sát khung nhìn khi pan/zoom.
+- Vạch Trigger dọc màu vàng #fff06a và cờ trigger cam #f1994b tại mẫu 6554 (mốc t = 0 s).
+- Khối giải mã (Inline Annotation Blocks) dạng chữ nhật phẳng trực tiếp trên dải decoder.
 - Cặp thước đo thời gian (Cursor A & Cursor B) kéo thả chuột kèm HUD tính Δt và f.
 """
 
-from typing import Optional, Dict, Any, List, Tuple
+from typing import Optional, Dict, Any, List, Tuple, Callable
 import numpy as np
 from PyQt5 import QtCore, QtGui, QtWidgets
 import pyqtgraph as pg
@@ -20,6 +20,26 @@ import pyqtgraph as pg
 from software.gui import theme as T
 
 DEFAULT_CHANNEL_NAMES = [f"Channel {i}" for i in range(8)]
+_BUBBLE_FONT_FAMILY: Optional[str] = None
+
+
+def _get_bubble_font_family() -> str:
+    """Lấy và lưu cache tên font tối ưu cho bong bóng giải mã (chỉ truy vấn QFontDatabase 1 lần)."""
+    global _BUBBLE_FONT_FAMILY
+    if _BUBBLE_FONT_FAMILY is None:
+        _BUBBLE_FONT_FAMILY = (
+            "Roboto Condensed" if "Roboto Condensed" in QtGui.QFontDatabase().families() else "Roboto"
+        )
+    return _BUBBLE_FONT_FAMILY
+
+
+class HoverSeparatorLine(pg.InfiniteLine):
+    """Đường phân cách track sóng sáng lên màu trắng mờ rgba(255, 255, 255, 0.6) khi rê chuột hover qua."""
+    def hoverEvent(self, ev):
+        if not ev.isExit():
+            self.setMouseHover(True)
+        else:
+            self.setMouseHover(False)
 
 
 def format_si_time(seconds: float) -> str:
@@ -51,13 +71,36 @@ def format_si_freq(freq_hz: float) -> str:
 class RelativeTimeAxis(pg.AxisItem):
     """Trục thời gian tương đối theo chuẩn UI_SPEC.md (0 tại Trigger, +0.1 ms, +0.2 ms...)."""
 
+    def paint(self, p, opt, widget):
+        p.save()
+        axis_rect = QtCore.QRectF(0, 0, self.width(), self.height())
+        p.fillRect(axis_rect, QtGui.QColor(T.BG_HEADER))
+        p.restore()
+        super().paint(p, opt, widget)
+
+    def tickValues(self, minVal, maxVal, size):
+        ticks = super().tickValues(minVal, maxVal, size)
+        if not ticks:
+            return ticks
+        span = max(1e-12, abs(maxVal - minVal))
+        # Chỉ giữ các mức tick có khoảng cách pixel >= 45px để grid nét đứt thoáng, đẹp
+        filtered = []
+        for spacing, values in ticks:
+            px_dist = size * spacing / span
+            if px_dist >= 45.0 or len(filtered) == 0:
+                filtered.append((spacing, values))
+            if len(filtered) >= 2:
+                break
+        return filtered
+
     def tickStrings(self, values, scale, spacing):
         strings = []
+        has_negative = any(v < -1e-12 for v in values)
         for v in values:
             if abs(v) < 1e-12:
                 strings.append("0")
                 continue
-            sign = "+" if v > 0 else "-"
+            sign = ("+" if has_negative else "") if v > 0 else "-"
             abs_v = abs(v)
             if abs_v >= 1.0:
                 strings.append(f"{sign}{abs_v:.2f} s")
@@ -70,15 +113,301 @@ class RelativeTimeAxis(pg.AxisItem):
         return strings
 
 
+class PillBubbleItem(QtWidgets.QGraphicsItem):
+    """Bong bóng giải mã (Inline Annotation Bubble) dạng khối chữ nhật phẳng:
+    - Co rút văn bản thích ứng 3 cấp (Adaptive Text Truncation: text_full -> text_mid -> text_short -> hide).
+    - Tương tác chuột phong phú: Hover tooltip, Click zoom, Ctrl+Click chọn dòng trong Data Table, Right-click context menu.
+    """
+
+    def __init__(
+        self,
+        t_start: float,
+        t_stop: float,
+        y_top: float,
+        height: float,
+        text: str,
+        bg_color: str,
+        text_color: str,
+        radius: float = 0.0,
+        tooltip: str = "",
+        text_mid: str = "",
+        text_short: str = "",
+        raw_data: Optional[Dict[str, Any]] = None,
+        on_clicked: Optional[Callable[[], None]] = None,
+        on_ctrl_clicked: Optional[Callable[[], None]] = None
+    ):
+        super().__init__()
+        self.t_start = t_start
+        self.t_stop = t_stop
+        self.y_top = y_top
+        self.height = height
+        self.text_full = text
+        self.text_mid = text_mid or text
+        self.text_short = text_short or (text[:2] if len(text) >= 2 else text)
+        self.raw_data = raw_data or {}
+        self.bg_brush = QtGui.QBrush(QtGui.QColor(bg_color))
+        self.text_color = QtGui.QColor(text_color)
+        self.radius = radius
+        self.on_clicked = on_clicked
+        self.on_ctrl_clicked = on_ctrl_clicked
+        self.is_hovered = False
+        self.setAcceptHoverEvents(True)
+        self.setCursor(QtCore.Qt.PointingHandCursor)
+        self.font = QtGui.QFont(_get_bubble_font_family())
+        self.font.setPixelSize(11)
+        self.font.setBold(True)
+        if tooltip:
+            full_tip = tooltip + "\n\n💡 Click: Zoom to Frame | Ctrl+Click: Select in Data Table | Right-Click: Context Menu"
+            self.setToolTip(full_tip)
+
+    def boundingRect(self) -> QtCore.QRectF:
+        dt = max(1e-12, self.t_stop - self.t_start)
+        return QtCore.QRectF(self.t_start, self.y_top, dt, self.height)
+
+    def hoverEnterEvent(self, event):
+        self.is_hovered = True
+        self.update()
+        super().hoverEnterEvent(event)
+
+    def hoverLeaveEvent(self, event):
+        self.is_hovered = False
+        self.update()
+        super().hoverLeaveEvent(event)
+
+    def mousePressEvent(self, event):
+        if event.button() == QtCore.Qt.LeftButton:
+            if (event.modifiers() & QtCore.Qt.ControlModifier) and self.on_ctrl_clicked:
+                self.on_ctrl_clicked()
+                event.accept()
+                return
+            elif self.on_clicked:
+                self.on_clicked()
+                event.accept()
+                return
+        super().mousePressEvent(event)
+
+    def contextMenuEvent(self, event):
+        menu = QtWidgets.QMenu()
+        menu.setStyleSheet(f"""
+            QMenu {{
+                background-color: {T.BG_CARD};
+                border: 1px solid {T.BORDER_MUTED};
+                border-radius: 4px;
+                padding: 4px 0px;
+            }}
+            QMenu::item {{
+                background-color: transparent;
+                color: {T.TEXT};
+                padding: 6px 20px 6px 12px;
+                font-family: 'Roboto', sans-serif;
+                font-size: 12px;
+            }}
+            QMenu::item:selected {{
+                background-color: {T.BG_SELECT};
+                color: #ffffff;
+            }}
+            QMenu::separator {{
+                height: 1px;
+                background-color: {T.BORDER_MUTED};
+                margin: 4px 6px;
+            }}
+        """)
+
+        val = self.raw_data.get("val", self.raw_data.get("byte_val"))
+        char = self.raw_data.get("char", "")
+        t_start = self.t_start
+
+        act_hex = menu.addAction(f"Copy Hex (0x{val:02X})") if val is not None else None
+        act_char = menu.addAction(f"Copy Character ('{char}')") if char else None
+        act_time = menu.addAction(f"Copy Timestamp ({format_si_time(t_start)})")
+        menu.addSeparator()
+        act_zoom = menu.addAction("🔍 Zoom to Frame")
+        act_table = menu.addAction("📋 Select in Data Table (Ctrl+Click)")
+
+        chosen = menu.exec_(event.screenPos())
+        if chosen and chosen == act_hex and val is not None:
+            QtWidgets.QApplication.clipboard().setText(f"0x{val:02X}")
+        elif chosen and chosen == act_char and char:
+            QtWidgets.QApplication.clipboard().setText(char)
+        elif chosen and chosen == act_time:
+            QtWidgets.QApplication.clipboard().setText(format_si_time(t_start))
+        elif chosen and chosen == act_zoom and self.on_clicked:
+            self.on_clicked()
+        elif chosen and chosen == act_table and self.on_ctrl_clicked:
+            self.on_ctrl_clicked()
+
+        event.accept()
+
+    def paint(self, painter: QtGui.QPainter, option, widget=None):
+        painter.save()
+        # Chuyển đổi tọa độ scene/view sang pixel thiết bị màn hình
+        p1 = painter.worldTransform().map(QtCore.QPointF(self.t_start, self.y_top))
+        p2 = painter.worldTransform().map(QtCore.QPointF(self.t_stop, self.y_top + self.height))
+
+        px_left = min(p1.x(), p2.x())
+        px_right = max(p1.x(), p2.x())
+        px_top = min(p1.y(), p2.y())
+        px_bottom = max(p1.y(), p2.y())
+        w = px_right - px_left
+        h = px_bottom - px_top
+
+        # Vẽ trong hệ tọa độ pixel để khối chữ nhật sắc nét không bị méo theo tỷ lệ thời gian
+        painter.setTransform(QtGui.QTransform())
+        painter.setRenderHint(QtGui.QPainter.Antialiasing, True if self.radius > 0 else False)
+
+        if w >= 2.0:
+            rect = QtCore.QRectF(px_left, px_top, w, h)
+            painter.setBrush(self.bg_brush)
+            if self.is_hovered:
+                painter.setPen(QtGui.QPen(QtGui.QColor("#ffffff"), 1.5))
+            else:
+                # Viền tối mảnh 1px phân tách các gói tin liền kề
+                painter.setPen(QtGui.QPen(QtGui.QColor("#1b1b1c"), 1.0))
+
+            if self.radius > 0:
+                r = min(self.radius, h / 2.0, w / 2.0)
+                painter.drawRoundedRect(rect, r, r)
+            else:
+                painter.drawRect(rect)
+
+            # Thuật toán co rút văn bản thích ứng 3 cấp độ (Adaptive Text Truncation)
+            if w >= 48.0:
+                display_txt = self.text_full
+            elif w >= 24.0:
+                display_txt = self.text_mid
+            elif w >= 12.0:
+                display_txt = self.text_short
+            else:
+                display_txt = ""
+
+            if display_txt:
+                painter.setPen(self.text_color)
+                painter.setFont(self.font)
+                painter.drawText(rect, QtCore.Qt.AlignCenter, display_txt)
+
+        painter.restore()
+
+
+class MultiBubbleItem(QtWidgets.QGraphicsItem):
+    """
+    Bong bóng gộp cụm (MultiBubble):
+    Khi Zoom xa (khoảng cách giữa các byte quá nhỏ), tự động gộp các byte liên tiếp lại
+    thành một khối kèm Badge đếm số lượng [N] và xem trước chuỗi.
+    """
+
+    def __init__(
+        self,
+        t_start: float,
+        t_stop: float,
+        y_top: float,
+        height: float,
+        count: int,
+        preview_text: str,
+        bg_color: str,
+        text_color: str,
+        tooltip: str = "",
+        on_clicked: Optional[Callable[[], None]] = None
+    ):
+        super().__init__()
+        self.t_start = t_start
+        self.t_stop = t_stop
+        self.y_top = y_top
+        self.height = height
+        self.count = count
+        self.preview_text = preview_text
+        self.bg_brush = QtGui.QBrush(QtGui.QColor(bg_color))
+        self.text_color = QtGui.QColor(text_color)
+        self.on_clicked = on_clicked
+        self.is_hovered = False
+        self.setAcceptHoverEvents(True)
+        self.setCursor(QtCore.Qt.PointingHandCursor)
+        self.badge_font = QtGui.QFont("Roboto", 8, QtGui.QFont.Bold)
+        self.badge_font.setPixelSize(9)
+        self.preview_font = QtGui.QFont(_get_bubble_font_family())
+        self.preview_font.setPixelSize(10)
+        self.preview_font.setBold(True)
+        if tooltip:
+            self.setToolTip(tooltip + "\n\n💡 Click / Double-click: Zoom In to Cluster")
+
+    def boundingRect(self) -> QtCore.QRectF:
+        dt = max(1e-12, self.t_stop - self.t_start)
+        return QtCore.QRectF(self.t_start, self.y_top, dt, self.height)
+
+    def hoverEnterEvent(self, event):
+        self.is_hovered = True
+        self.update()
+        super().hoverEnterEvent(event)
+
+    def hoverLeaveEvent(self, event):
+        self.is_hovered = False
+        self.update()
+        super().hoverLeaveEvent(event)
+
+    def mousePressEvent(self, event):
+        if event.button() == QtCore.Qt.LeftButton and self.on_clicked:
+            self.on_clicked()
+            event.accept()
+        else:
+            super().mousePressEvent(event)
+
+    def paint(self, painter: QtGui.QPainter, option, widget=None):
+        painter.save()
+        p1 = painter.worldTransform().map(QtCore.QPointF(self.t_start, self.y_top))
+        p2 = painter.worldTransform().map(QtCore.QPointF(self.t_stop, self.y_top + self.height))
+
+        px_left = min(p1.x(), p2.x())
+        px_right = max(p1.x(), p2.x())
+        px_top = min(p1.y(), p2.y())
+        px_bottom = max(p1.y(), p2.y())
+        w = max(4.0, px_right - px_left)
+        h = px_bottom - px_top
+
+        painter.setTransform(QtGui.QTransform())
+        painter.setRenderHint(QtGui.QPainter.Antialiasing, False)
+
+        rect = QtCore.QRectF(px_left, px_top, w, h)
+        painter.setBrush(self.bg_brush)
+        if self.is_hovered:
+            painter.setPen(QtGui.QPen(QtGui.QColor("#ffffff"), 1.5))
+        else:
+            painter.setPen(QtGui.QPen(QtGui.QColor("#1b1b1c"), 1.0))
+        painter.drawRect(rect)
+
+        # Badge đếm số lượng gói [N] (bubbleCounterStyle)
+        badge_str = f"[{self.count}]" if self.count <= 99 else "[99+]"
+
+        if w >= 26.0:
+            badge_w = 22.0 if self.count <= 99 else 28.0
+            badge_rect = QtCore.QRectF(px_left + 2, px_top + 2, badge_w, h - 4)
+            painter.setRenderHint(QtGui.QPainter.Antialiasing, True)
+            painter.setBrush(QtGui.QBrush(QtGui.QColor("#242528")))
+            painter.setPen(QtCore.Qt.NoPen)
+            painter.drawRoundedRect(badge_rect, 3.0, 3.0)
+
+            painter.setPen(QtGui.QColor("#ffffff"))
+            painter.setFont(self.badge_font)
+            painter.drawText(badge_rect, QtCore.Qt.AlignCenter, badge_str)
+
+            # Vẽ text xem trước bên cạnh badge nếu còn đủ chỗ
+            if w >= 65.0 and self.preview_text:
+                text_rect = QtCore.QRectF(px_left + badge_w + 5, px_top, w - badge_w - 7, h)
+                painter.setPen(self.text_color)
+                painter.setFont(self.preview_font)
+                painter.drawText(text_rect, QtCore.Qt.AlignLeft | QtCore.Qt.AlignVCenter, self.preview_text)
+
+        painter.restore()
+
+
 class WaveformHUD(QtWidgets.QFrame):
     """Bảng HUD bán trong suốt hiển thị thông số Cursors A & B góc trên bên phải."""
 
     def __init__(self, parent=None):
         super().__init__(parent)
+        self.setObjectName("waveformHud")
         self.setStyleSheet(f"""
-            QFrame {{
-                background-color: rgba(20, 20, 21, 0.92);
-                border: 1px solid {T.BORDER};
+            QFrame#waveformHud {{
+                background-color: {T.TOOLTIP_BG};
+                border: 1px solid {T.BORDER_MUTED};
                 border-radius: 6px;
                 padding: 2px 6px;
             }}
@@ -87,6 +416,7 @@ class WaveformHUD(QtWidgets.QFrame):
                 font-size: 11px;
                 font-weight: bold;
                 background: transparent;
+                border: none;
             }}
         """)
 
@@ -95,19 +425,19 @@ class WaveformHUD(QtWidgets.QFrame):
         layout.setSpacing(12)
 
         self.lbl_title = QtWidgets.QLabel("<b>CURSORS</b>")
-        self.lbl_title.setStyleSheet(f"color: {T.TEXT_DIM}; background: transparent;")
+        self.lbl_title.setStyleSheet(f"color: {T.TEXT_DIM}; background: transparent; border: none;")
 
         self.lbl_a = QtWidgets.QLabel("A: 0.000 ms")
-        self.lbl_a.setStyleSheet(f"color: {T.CURSOR_A}; background: transparent;")
+        self.lbl_a.setStyleSheet(f"color: {T.CURSOR_A}; background: transparent; border: none;")
 
         self.lbl_b = QtWidgets.QLabel("B: 0.000 ms")
-        self.lbl_b.setStyleSheet(f"color: {T.CURSOR_B}; background: transparent;")
+        self.lbl_b.setStyleSheet(f"color: {T.CURSOR_B}; background: transparent; border: none;")
 
         self.lbl_dt = QtWidgets.QLabel("Δt: 0.000 µs")
-        self.lbl_dt.setStyleSheet(f"color: {T.TEXT}; background: transparent;")
+        self.lbl_dt.setStyleSheet(f"color: {T.TEXT}; background: transparent; border: none;")
 
         self.lbl_freq = QtWidgets.QLabel("f: -- Hz")
-        self.lbl_freq.setStyleSheet(f"color: {T.ACCENT_START}; background: transparent;")
+        self.lbl_freq.setStyleSheet(f"color: {T.ACCENT_START}; background: transparent; border: none;")
 
         layout.addWidget(self.lbl_title)
         layout.addWidget(self.lbl_a)
@@ -124,14 +454,27 @@ class WaveformHUD(QtWidgets.QFrame):
             self.lbl_freq.setText(f"f: {format_si_freq(1.0 / dt)}")
         else:
             self.lbl_freq.setText("f: ∞ Hz")
+        if self.parentWidget() is not None:
+            self.adjustSize()
+            hud_w = max(self.sizeHint().width() + 28, 395)
+            hud_h = max(self.sizeHint().height(), 26)
+            self.setGeometry(self.parentWidget().width() - hud_w - 16, self.parentWidget().height() - hud_h - 10, hud_w, hud_h)
 
 
 class WaveformWidget(QtWidgets.QWidget):
     """
-    Widget khung vẽ sóng 8 kênh tích hợp Cột nhãn bên trái (194px) và PlotWidget (pyqtgraph)
-    đáp ứng 100% đặc tả UI_SPEC.md và bản mẫu proto.py (v3).
+    Widget khung vẽ sóng 8 kênh tích hợp Cột nhãn bên trái (180px) và PlotWidget (pyqtgraph)
+    đáp ứng 100% đặc tả UI_SPEC.md:
+    - Nền canvas #1b1b1c.
+    - 8 track kênh tự co giãn lấp đầy chiều cao.
+    - Dạng sóng số stepMode="right".
+    - Nhãn H/L và vạch phân cách mỏng #57575e.
+    - Vạch Trigger vàng #fff06a và cờ trigger cam #f1994b tại mẫu 6554 (t = 0 s).
+    - Bong bóng giải mã trực tiếp trên track sóng.
     """
     sigCursorChanged = QtCore.pyqtSignal(float, float, float)  # t_a, t_b, dt
+    sigXRangeChanged = QtCore.pyqtSignal(float, float)        # x_min, x_max
+    sigBubbleCtrlClicked = QtCore.pyqtSignal(int, dict)        # (frame_idx, frame_dict)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -143,10 +486,15 @@ class WaveformWidget(QtWidgets.QWidget):
         self.dec_scale = T.DECODER_ROW_SCALE
         self.row_heights: List[int] = [int(self.row_h * self.dec_scale)] + [self.row_h] * 7
 
+        # Lưu trữ frame UART phục vụ cơ chế chuyển đổi MultiBubble <-> SingleBubble khi Zoom
+        self._uart_frames: List[Dict[str, Any]] = []
+        self._uart_sample_rate: float = 1_000_000.0
+        self._uart_trig_offset: int = 6554
+        self._is_multibubble: bool = False
+
         # Danh sách đồ họa chú thích decoder & bit dots
         self.decode_items: List[QtWidgets.QGraphicsItem] = []
         self.bit_dots_item: Optional[pg.ScatterPlotItem] = None
-        self.grid_lines: List[pg.InfiniteLine] = []
 
         self._init_ui()
 
@@ -156,26 +504,28 @@ class WaveformWidget(QtWidgets.QWidget):
         main_layout.setSpacing(0)
 
         # ---------------------------------------------------------------------
-        # 1. CỘT NHÃN BÊN TRÁI (194 px)
+        # 1. CỘT NHÃN BÊN TRÁI (180 px, chuẩn UI_SPEC.md)
         # ---------------------------------------------------------------------
         self.lab = QtWidgets.QWidget(self)
+        self.lab.setObjectName("channelLabelColumn")
         self.lab.setFixedWidth(T.LABEL_COLUMN_WIDTH)
-        self.lab.setStyleSheet(f"background-color: {T.BG_MAIN};")
+        self.lab.setStyleSheet(f"#channelLabelColumn {{ background-color: {T.BG_MAIN}; border-right: 1px solid {T.BORDER_MUTED}; }}")
 
         self.vl_labels = QtWidgets.QVBoxLayout(self.lab)
         self.vl_labels.setContentsMargins(0, 0, 0, 0)
         self.vl_labels.setSpacing(0)
 
-        # Khoảng đệm tương ứng chiều cao thước thời gian trên cùng (32 px)
+        # Khoảng đệm tương ứng chiều cao thước thời gian trên cùng (32 px, channelLabelHeader)
         self.top_spacer = QtWidgets.QWidget()
         self.top_spacer.setFixedHeight(T.AXIS_HEIGHT)
-        self.top_spacer.setStyleSheet(f"background-color: {T.BG_MAIN}; border-bottom: 1px solid {T.BORDER};")
+        self.top_spacer.setStyleSheet(f"background-color: {T.BG_HEADER}; border-right: 1px solid {T.BORDER_MUTED}; border-bottom: 1px solid {T.BORDER_MUTED};")
         self.vl_labels.addWidget(self.top_spacer)
 
         # 8 khung nhãn kênh
         self.channel_frames: List[QtWidgets.QFrame] = []
         self.channel_labels_top: List[QtWidgets.QLabel] = []
         self.channel_chips: List[QtWidgets.QLabel] = []
+        self.channel_menu_buttons: List[QtWidgets.QToolButton] = []
 
         for i in range(8):
             f = QtWidgets.QFrame()
@@ -184,30 +534,61 @@ class WaveformWidget(QtWidgets.QWidget):
                 QFrame {{
                     background-color: {T.BG_MAIN};
                     border-left: 4px solid {col};
-                    border-bottom: 1px solid {T.BORDER};
+                    border-bottom: 1px solid {T.BORDER_MUTED};
+                }}
+                QFrame:hover {{
+                    background-color: {T.BG_SELECT};
                 }}
                 QLabel {{ border: none; background: transparent; }}
             """)
             f_lay = QtWidgets.QVBoxLayout(f)
-            f_lay.setContentsMargins(14, 6, 8, 6)
+            f_lay.setContentsMargins(12, 6, 8, 6)
             f_lay.setSpacing(2)
 
+            h_ch = QtWidgets.QHBoxLayout()
+            h_ch.setContentsMargins(0, 0, 0, 0)
+            h_ch.setSpacing(4)
+
             top_lbl = QtWidgets.QLabel(
-                f"<span style='color:{col};font-weight:bold;font-size:11px'>D{i}</span>"
-                f"&nbsp;&nbsp;&nbsp;<span style='font-size:14px;font-weight:bold;color:{T.TEXT}'>Channel {i}</span>"
+                f"<span style=\"color:{col};font-family:'Roboto Condensed','Roboto',sans-serif;font-weight:700;font-size:11px;letter-spacing:0.165px;\">D{i}</span>"
+                f"&nbsp;&nbsp;&nbsp;<span style=\"font-family:'Roboto',sans-serif;font-size:13px;font-weight:500;letter-spacing:0.065px;color:{T.TEXT};\">Channel {i}</span>"
             )
-            f_lay.addWidget(top_lbl, 0, QtCore.Qt.AlignTop if i == 0 else QtCore.Qt.AlignVCenter)
+            h_ch.addWidget(top_lbl, 1)
+
+            # Nút Menu kênh [...] tùy chọn cho từng kênh số
+            btn_menu = QtWidgets.QToolButton()
+            btn_menu.setText("•••")
+            btn_menu.setToolTip(f"Channel {i} Settings & Options")
+            btn_menu.setFixedSize(22, 20)
+            btn_menu.setStyleSheet(f"""
+                QToolButton {{
+                    background-color: transparent;
+                    border: none;
+                    border-radius: 4px;
+                    color: {T.TEXT_MUTED};
+                    font-size: 10px;
+                    font-weight: bold;
+                    padding: 0px;
+                }}
+                QToolButton:hover {{
+                    background-color: {T.BG_SELECT};
+                    color: {T.TEXT};
+                }}
+            """)
+            btn_menu.clicked.connect(lambda checked, ch=i, b=btn_menu: self._show_channel_menu(ch, b))
+            h_ch.addWidget(btn_menu, 0, QtCore.Qt.AlignRight | QtCore.Qt.AlignVCenter)
+            self.channel_menu_buttons.append(btn_menu)
+
+            f_lay.addLayout(h_ch)
             self.channel_labels_top.append(top_lbl)
 
-            # Chip hiển thị analyzer (gắn mặc định vào CH0: Async Serial)
-            if i == 0:
-                chip = QtWidgets.QLabel(f"<span style='color:{T.DECODE_UART_BG}'>■</span> Async Serial")
-                chip.setStyleSheet(f"color: {T.TEXT_DIM}; font-size: 11px;")
-                f_lay.addWidget(chip)
-                f_lay.addStretch(1)
-                self.channel_chips.append(chip)
-            else:
-                self.channel_chips.append(None)
+            # Chip hiển thị analyzer (chuẩn hóa đồng nhất cho cả 8 kênh)
+            chip = QtWidgets.QLabel(f"<span style='color:{T.DECODE_UART_BG};font-size:9px;'>■</span> &nbsp;Async Serial" if i == 0 else "")
+            chip.setStyleSheet(f"color: {T.TEXT_DIM}; font-family: 'Roboto', sans-serif; font-size: 11px;")
+            chip.setVisible(i == 0)
+            f_lay.addWidget(chip)
+            f_lay.addStretch(1)
+            self.channel_chips.append(chip)
 
             self.channel_frames.append(f)
             self.vl_labels.addWidget(f)
@@ -216,15 +597,14 @@ class WaveformWidget(QtWidgets.QWidget):
         main_layout.addWidget(self.lab)
 
         # ---------------------------------------------------------------------
-        # 2. KHUNG VẼ SÓNG PYQTGRAPH (Trục thời gian trên cùng, Inverted Y)
+        # 2. KHUNG VẼ SÓNG PYQTGRAPH (Canvas #1b1b1c, Trục thời gian trên cùng)
         # ---------------------------------------------------------------------
         self.time_axis = RelativeTimeAxis("top")
         self.time_axis.setHeight(T.AXIS_HEIGHT)
-        self.time_axis.setPen(pg.mkPen(T.GRID))
-        self.time_axis.setTextPen(pg.mkPen(T.TEXT))
-        self.time_axis.setTickSpacing(1e-4, 5e-5)
 
-        self.plot_widget = pg.PlotWidget(background=T.BG_MAIN, axisItems={"top": self.time_axis})
+        self.plot_widget = pg.PlotWidget(background=T.BG_CANVAS, axisItems={"top": self.time_axis})
+        T.configure_pyqtgraph(self.plot_widget)
+
         self.plot_item = self.plot_widget.getPlotItem()
         self.plot_item.hideAxis("left")
         self.plot_item.hideAxis("bottom")
@@ -234,65 +614,150 @@ class WaveformWidget(QtWidgets.QWidget):
         self.plot_item.layout.setContentsMargins(0, 0, 0, 0)
         self.plot_item.layout.setSpacing(0)
 
+        # Cấu hình grid nét đứt (#49494d) và chữ mốc thời gian trắng đậm theo chuẩn UI_SPEC.md
+        self.time_axis.setPen(pg.mkPen(T.BORDER_MUTED, width=1))
+        self.time_axis.setTextPen(pg.mkPen("#e0e0e0"))
+        self.time_axis.setTickPen(pg.mkPen(color=T.GRID_DASH, width=1, style=QtCore.Qt.DashLine))
+        self.time_axis.setGrid(255)
+        self.time_axis.setStyle(
+            tickAlpha=255,
+            tickFont=QtGui.QFont(
+                "Roboto Mono" if "Roboto Mono" in QtGui.QFontDatabase().families() else "DejaVu Sans Mono",
+                8,
+                QtGui.QFont.Bold
+            )
+        )
+
         self.vb = self.plot_item.getViewBox()
         self.vb.setMouseEnabled(x=True, y=False)
         self.vb.invertY(True)  # D0 ở trên, D7 ở dưới
+        self.vb.disableAutoRange(pg.ViewBox.XYAxes)
+        self.vb.sigRangeChanged.connect(self._on_view_range_changed)
 
-        # Đường phân cách hàng (Horizontal row separators)
-        self.row_separator_lines: List[pg.InfiniteLine] = []
+        # Đường phân cách hàng mỏng theo chuẩn border-20 (#57575e), hover sáng 60% trắng (.resizeHandle:hover)
+        self.row_separator_lines: List[HoverSeparatorLine] = []
         for _ in range(8):
-            sep = pg.InfiniteLine(pos=0, angle=0, pen=pg.mkPen(T.BORDER, width=1))
-            self.vb.addItem(sep)
+            sep = HoverSeparatorLine(
+                pos=0,
+                angle=0,
+                pen=pg.mkPen(T.BORDER_MUTED, width=1),
+                hoverPen=pg.mkPen((255, 255, 255, 153), width=1.5),
+                movable=False
+            )
+            sep.setZValue(15)
+            self.vb.addItem(sep, ignoreBounds=True)
             self.row_separator_lines.append(sep)
 
-        # Nhãn H và L mép trái mỗi hàng
+        # Nhãn H và L mép trái mỗi track (@mixin smallLabelHeavy: Roboto 8px Bold)
         self.hl_text_items: List[Tuple[pg.TextItem, pg.TextItem]] = []
+        hl_font = QtGui.QFont("Roboto", 8, QtGui.QFont.Bold)
+        hl_font.setPixelSize(8)
+        hl_font.setBold(True)
         for _ in range(8):
             t_h = pg.TextItem("H", color=T.TEXT_DIM, anchor=(0, 0.5))
+            t_h.setFont(hl_font)
+            t_h.setZValue(16)
             t_l = pg.TextItem("L", color=T.TEXT_DIM, anchor=(0, 0.5))
-            self.vb.addItem(t_h)
-            self.vb.addItem(t_l)
+            t_l.setFont(hl_font)
+            t_l.setZValue(16)
+            self.vb.addItem(t_h, ignoreBounds=True)
+            self.vb.addItem(t_l, ignoreBounds=True)
             self.hl_text_items.append((t_h, t_l))
 
-        # 8 đường cong PlotCurveItem cho 8 kênh
+        # 8 đường cong PlotCurveItem cho 8 kênh với màu từ CHANNEL_COLORS (zValue 10, trên grid)
         self.curves: List[pg.PlotCurveItem] = []
         for ch in range(8):
-            pen = pg.mkPen(color=T.CHANNEL_COLORS[ch], width=1.4)
+            pen = pg.mkPen(color=T.CHANNEL_COLORS[ch], width=1.5)
             curve = pg.PlotCurveItem(pen=pen)
+            curve.setZValue(10)
             self.vb.addItem(curve)
             self.curves.append(curve)
 
-        # Vạch chỉ thị Trigger (T-Marker)
+        # 8 ScatterPlotItem hiển thị dấu chấm mẫu phần cứng (Hardware Sample Points - Loại A)
+        # Bật khi Zoom sâu (px_per_sample >= 6.0 px)
+        self.sample_points_items: List[pg.ScatterPlotItem] = []
+        for ch in range(8):
+            sp = pg.ScatterPlotItem(
+                size=3,
+                pen=pg.mkPen(None),
+                brush=pg.mkBrush(T.CHANNEL_COLORS[ch]),
+                pxMode=True
+            )
+            sp.setZValue(12)  # Nằm ngay trên đường sóng (zValue 10)
+            self.vb.addItem(sp, ignoreBounds=True)
+            self.sample_points_items.append(sp)
+
+        # Vạch Trigger dọc màu vàng #fff06a và cờ trigger cam #f18d4b (zValue 20)
         self.trigger_line = pg.InfiniteLine(
             pos=0.0,
             angle=90,
-            pen=pg.mkPen(color=T.TRIGGER_MARKER, width=2, style=QtCore.Qt.SolidLine),
+            pen=pg.mkPen(color=T.TRIGGER_LINE, width=1.5, style=QtCore.Qt.SolidLine),
             label="T",
-            labelOpts={"color": T.TRIGGER_MARKER, "position": 0.95, "anchors": [(0, 0), (0, 0)]}
+            labelOpts={
+                "color": "#ffffff",
+                "fill": QtGui.QBrush(QtGui.QColor(T.TRIGGER_MARKER)),
+                "position": 0.03,
+                "anchors": [(0.5, 0.5), (0.5, 0.5)]
+            }
         )
-        self.vb.addItem(self.trigger_line)
+        self.trigger_line.label.setFont(QtGui.QFont("Segoe UI", 8, QtGui.QFont.Bold))
+        self.trigger_line.setZValue(20)
+        self.vb.addItem(self.trigger_line, ignoreBounds=True)
+        self.trigger_line.hide()
 
-        # Cặp thước đo thời gian (Cursors A & B)
+        # Cặp thước đo thời gian (Cursors A & B) (zValue 25)
         self.cursor_a = pg.InfiniteLine(
             pos=0.0,
             angle=90,
             movable=True,
-            pen=pg.mkPen(color=T.CURSOR_A, width=1.8, style=QtCore.Qt.SolidLine),
+            pen=pg.mkPen(color=T.CURSOR_A, width=1.6, style=QtCore.Qt.SolidLine),
             hoverPen=pg.mkPen(color="#80d8ff", width=2.5),
             label="A",
-            labelOpts={"color": T.CURSOR_A, "position": 0.90, "anchors": [(0, 0), (0, 0)]}
+            labelOpts={
+                "color": "#ffffff",
+                "fill": QtGui.QBrush(QtGui.QColor(T.CURSOR_A)),
+                "position": 0.90,
+                "anchors": [(0.5, 0.5), (0.5, 0.5)]
+            }
         )
+        self.cursor_a.label.setFont(QtGui.QFont("Segoe UI", 8, QtGui.QFont.Bold))
+        self.cursor_a.setZValue(25)
+
         self.cursor_b = pg.InfiniteLine(
             pos=8.68e-5,
             angle=90,
             movable=True,
-            pen=pg.mkPen(color=T.CURSOR_B, width=1.8, style=QtCore.Qt.SolidLine),
+            pen=pg.mkPen(color=T.CURSOR_B, width=1.6, style=QtCore.Qt.SolidLine),
             hoverPen=pg.mkPen(color="#ff8a80", width=2.5),
             label="B",
-            labelOpts={"color": T.CURSOR_B, "position": 0.85, "anchors": [(0, 0), (0, 0)]}
+            labelOpts={
+                "color": "#ffffff",
+                "fill": QtGui.QBrush(QtGui.QColor(T.CURSOR_B)),
+                "position": 0.93,
+                "anchors": [(0.5, 0.5), (0.5, 0.5)]
+            }
         )
-        self.vb.addItem(self.cursor_a)
-        self.vb.addItem(self.cursor_b)
+        self.cursor_b.label.setFont(QtGui.QFont("Segoe UI", 8, QtGui.QFont.Bold))
+        self.cursor_b.setZValue(25)
+
+        self.vb.addItem(self.cursor_a, ignoreBounds=True)
+        self.vb.addItem(self.cursor_b, ignoreBounds=True)
+
+        # Vùng span đo đạc bán trong suốt giữa Cursor A và Cursor B (RangeDisplay / Measurement Span Bar)
+        self.cursor_region = pg.LinearRegionItem(
+            values=[0.0, 8.68e-5],
+            movable=False,
+            brush=QtGui.QBrush(QtGui.QColor(38, 163, 217, 24)),
+            pen=pg.mkPen(color=QtGui.QColor(38, 163, 217, 80), width=1, style=QtCore.Qt.DashLine)
+        )
+        self.cursor_region.setZValue(18)
+        self.vb.addItem(self.cursor_region, ignoreBounds=True)
+
+        # Nhãn text span trên sóng hiển thị |← Δt →|
+        self.cursor_span_text = pg.TextItem(text="", color="#ffffff", anchor=(0.5, 0.5))
+        self.cursor_span_text.setFont(QtGui.QFont("Roboto Mono", 8, QtGui.QFont.Bold))
+        self.cursor_span_text.setZValue(26)
+        self.vb.addItem(self.cursor_span_text, ignoreBounds=True)
 
         self.cursor_a.sigPositionChanged.connect(self._on_cursor_moved)
         self.cursor_b.sigPositionChanged.connect(self._on_cursor_moved)
@@ -300,36 +765,52 @@ class WaveformWidget(QtWidgets.QWidget):
         main_layout.addWidget(self.plot_widget, 1)
 
         # ---------------------------------------------------------------------
-        # 3. FLOATING HUD (Góc trên bên phải)
+        # 3. FLOATING HUD (Góc trên bên phải dưới Timeline)
         # ---------------------------------------------------------------------
         self.hud = WaveformHUD(self.plot_widget)
         self.hud_widget = self.hud
         self.hud.raise_()
         self._update_hud()
+        # Ẩn con trỏ đo mặc định để giao diện sạch khi khởi động (bấm phím C hoặc nút ❙❙ để bật)
+        self.toggle_cursors(False)
 
         # Tính toán hình học ban đầu
         self._recompute_row_heights()
+        # Đặt phạm vi X ban đầu cố định (0 đến 32.768 ms ứng với 32.768 mẫu 1MHz)
+        self.plot_widget.setXRange(0.0, 0.032768, padding=0)
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
         self._recompute_row_heights()
 
-        # Căn góc trên bên phải cho HUD
-        hud_w = self.hud.sizeHint().width()
-        hud_h = self.hud.sizeHint().height()
-        self.hud.setGeometry(self.plot_widget.width() - hud_w - 20, 10, hud_w, hud_h)
+        # Căn góc dưới bên phải cho HUD để không bao giờ che dải bong bóng giải mã của CH0
+        hud_w = max(self.hud.sizeHint().width() + 24, 380)
+        hud_h = max(self.hud.sizeHint().height(), 26)
+        self.hud.setGeometry(self.plot_widget.width() - hud_w - 16, self.plot_widget.height() - hud_h - 10, hud_w, hud_h)
 
     def _recompute_row_heights(self):
-        """Tính toán chiều cao hàng co giãn lấp đầy chiều dọc theo UI_SPEC.md."""
+        """Tính toán chiều cao 8 track co giãn lấp đầy chiều cao cửa sổ theo UI_SPEC.md."""
         avail_h = self.plot_widget.height() - T.AXIS_HEIGHT
         if avail_h <= 0:
             avail_h = self.height() - T.AXIS_HEIGHT
+        if avail_h <= 0:
+            avail_h = 600
 
-        # Chiều cao hàng cơ sở = avail / (7 + scale)
-        row_h = int(avail_h / (7 + self.dec_scale))
-        self.row_h = max(row_h, T.CHANNEL_ROW_HEIGHT)
+        # Phân bổ chiều cao lấp đầy: Hàng có gắn Protocol Analyzer cao gấp 1.35x hàng thường
+        active_channels = getattr(self, "active_analyzer_channels", {0})
+        weights = [self.dec_scale if ch in active_channels else 1.0 for ch in range(8)]
+        total_weight = sum(weights)
 
-        self.row_heights = [int(self.row_h * self.dec_scale)] + [self.row_h] * 7
+        min_total = int(T.CHANNEL_ROW_HEIGHT * (8 - len(active_channels) + len(active_channels) * self.dec_scale))
+        target_h = max(avail_h, min_total)
+
+        heights = [int(target_h * w / total_weight) for w in weights]
+        diff = target_h - sum(heights)
+        for i in range(diff):
+            heights[i % 8] += 1
+
+        self.row_heights = heights
+        self.row_h = heights[1]  # Chiều cao track chuẩn
         total_h = sum(self.row_heights)
 
         # Cập nhật chiều cao các frame cột nhãn
@@ -339,26 +820,165 @@ class WaveformWidget(QtWidgets.QWidget):
         # Cập nhật phạm vi ViewBox Y
         self.vb.setYRange(0, total_h, padding=0)
 
-        # Cập nhật vị trí vạch ngăn và nhãn H/L
+        # Cập nhật vị trí vạch ngăn mỏng giữa các track
         y0 = 0
         for i, h in enumerate(self.row_heights):
-            top = y0 + (h - self.row_h) if i == 0 else y0
-            hi = top + self.row_h * 0.22
-            lo = top + self.row_h * 0.78
-
-            # Vạch ngăn
             self.row_separator_lines[i].setValue(y0 + h)
-
-            # Nhãn H/L
-            t_h, t_l = self.hl_text_items[i]
-            t_h.setPos(-0.00005, hi)
-            t_l.setPos(-0.00005, lo)
-
             y0 += h
 
-        # Nếu đang có dữ liệu, vẽ lại dữ liệu với chiều cao hàng mới
+        self._update_hl_positions()
+
+        # Nếu đang có dữ liệu, vẽ lại dữ liệu với chiều cao track mới
         if self.current_data:
             self._update_curve_data()
+
+    def _on_view_range_changed(self):
+        """Khi vùng nhìn X thay đổi do Zoom hoặc Pan."""
+        self._update_hl_positions()
+        self._update_hardware_sample_points()
+        self._check_multibubble_transition()
+        if hasattr(self, "cursor_a") and self.cursor_a.isVisible():
+            self._update_cursor_span_visibility()
+        vr = self.vb.viewRange()
+        self.sigXRangeChanged.emit(vr[0][0], vr[0][1])
+
+    def _update_cursor_span_visibility(self):
+        """Chỉ hiển thị nhãn |← Δt →| khi khoảng cách pixel giữa A và B >= 85px để không đè lên bong bóng."""
+        if not hasattr(self, "cursor_span_text") or not self.cursor_a.isVisible():
+            if hasattr(self, "cursor_span_text"):
+                self.cursor_span_text.setVisible(False)
+            return
+        t_a = self.cursor_a.value()
+        t_b = self.cursor_b.value()
+        dt = abs(t_b - t_a)
+        vr = self.vb.viewRange()
+        t_span = max(1e-12, vr[0][1] - vr[0][0])
+        vb_w = max(10, self.vb.width())
+        px_dist = (dt / t_span) * vb_w
+        self.cursor_span_text.setVisible(px_dist >= 85.0)
+
+    def _check_multibubble_transition(self):
+        """Kiểm tra và chuyển đổi giữa SingleBubble và MultiBubble khi vượt ngưỡng Zoom."""
+        if not self._uart_frames or len(self._uart_frames) < 2:
+            return
+        vr = self.vb.viewRange()
+        t_span = max(1e-12, vr[0][1] - vr[0][0])
+        vb_w = max(10, self.vb.width())
+        px_per_sample = vb_w / (t_span * self._uart_sample_rate)
+        px_per_byte = px_per_sample * 87.0
+        should_be_multi = (px_per_byte < 18.0)
+        if should_be_multi != self._is_multibubble:
+            self._render_uart_bubbles()
+
+    def _update_hardware_sample_points(self):
+        """
+        Hiển thị các dấu chấm mẫu rời rạc phần cứng (Hardware Sample Points - Loại A)
+        chỉ khi người dùng Zoom sâu (px_per_sample >= 6.0 px), tự động ẩn khi Zoom xa.
+        """
+        if not self.current_data or not hasattr(self, "sample_points_items"):
+            return
+
+        vr = self.vb.viewRange()
+        x_min, x_max = vr[0][0], vr[0][1]
+        t_span = max(1e-12, x_max - x_min)
+        vb_width_px = max(10, self.vb.width())
+
+        sample_rate = float(self.current_data["sample_rate"])
+        sample_count = int(self.current_data["sample_count"])
+        trig_offset = int(self.current_data["trig_offset"])
+        status = self.current_data.get("status", 0)
+
+        # Số mẫu hiển thị trên màn hình hiện tại
+        sample_span = t_span * sample_rate
+        px_per_sample = vb_width_px / sample_span
+
+        # Kiểm soát ẩn/hiện Protocol Bit Markers khi zoom quá xa (nếu 1 bit hiển thị < 6 px)
+        if self.bit_dots_item:
+            self.bit_dots_item.setVisible(px_per_sample * 8.0 >= 6.0)
+
+        # Ngưỡng kích hoạt: Khoảng cách giữa 2 mẫu liên tiếp trên màn hình phải >= 6 px
+        if px_per_sample < 6.0:
+            for sp in self.sample_points_items:
+                if sp.isVisible():
+                    sp.clear()
+                    sp.setVisible(False)
+            return
+
+        # Zoom sâu: Tính chỉ số mẫu trong khung nhìn [idx_start, idx_end]
+        if status == 0:
+            idx_start = int(x_min * sample_rate + trig_offset) - 1
+            idx_end = int(x_max * sample_rate + trig_offset) + 2
+        else:
+            idx_start = int(x_min * sample_rate) - 1
+            idx_end = int(x_max * sample_rate) + 2
+
+        idx_start = max(0, min(sample_count, idx_start))
+        idx_end = max(0, min(sample_count, idx_end))
+
+        if idx_end <= idx_start:
+            for sp in self.sample_points_items:
+                sp.clear()
+                sp.setVisible(False)
+            return
+
+        # Mảng thời gian của các mẫu nằm trong khung nhìn
+        if status == 0:
+            t_pts = (np.arange(idx_start, idx_end, dtype=np.float64) - trig_offset) / sample_rate
+        else:
+            t_pts = np.arange(idx_start, idx_end, dtype=np.float64) / sample_rate
+
+        channels = self.current_data["channels"]
+        y0 = 0
+        active_channels = getattr(self, "active_analyzer_channels", {0})
+        for ch in range(8):
+            sp = self.sample_points_items[ch]
+            if not self.channel_visible[ch]:
+                sp.clear()
+                sp.setVisible(False)
+                continue
+
+            h = self.row_heights[ch]
+            if ch in active_channels:
+                decoder_space = h - self.row_h
+                wave_top = y0 + decoder_space
+                hi = wave_top + self.row_h * 0.22
+                lo = wave_top + self.row_h * 0.78
+            else:
+                hi = y0 + h * 0.22
+                lo = y0 + h * 0.78
+
+            ch_slice = channels[ch][idx_start:idx_end]
+            y_pts = np.where(ch_slice == 1, hi, lo)
+
+            sp.setData(x=t_pts, y=y_pts)
+            sp.setVisible(True)
+            y0 += h
+
+    def _update_hl_positions(self):
+        """Cập nhật vị trí nhãn H và L bám sát mép trái ViewBox."""
+        if not hasattr(self, "hl_text_items") or not self.hl_text_items:
+            return
+        view_range = self.vb.viewRange()
+        x_min, x_max = view_range[0][0], view_range[0][1]
+        x_span = max(1e-9, x_max - x_min)
+        x_pos = x_min + x_span * 0.005
+
+        y0 = 0
+        active_channels = getattr(self, "active_analyzer_channels", {0})
+        for i, h in enumerate(self.row_heights):
+            if i in active_channels:
+                decoder_space = h - self.row_h
+                wave_top = y0 + decoder_space
+                hi = wave_top + self.row_h * 0.22
+                lo = wave_top + self.row_h * 0.78
+            else:
+                hi = y0 + h * 0.22
+                lo = y0 + h * 0.78
+
+            t_h, t_l = self.hl_text_items[i]
+            t_h.setPos(x_pos, hi)
+            t_l.setPos(x_pos, lo)
+            y0 += h
 
     def set_channel_name(self, ch: int, name: str):
         """Đổi tên hiển thị của kênh số."""
@@ -366,24 +986,105 @@ class WaveformWidget(QtWidgets.QWidget):
             self.channel_names[ch] = name
             col = T.CHANNEL_COLORS[ch]
             self.channel_labels_top[ch].setText(
-                f"<span style='color:{col};font-weight:bold;font-size:11px'>D{ch}</span>"
-                f"&nbsp;&nbsp;&nbsp;<span style='font-size:14px;font-weight:bold;color:{T.TEXT}'>{name}</span>"
+                f"<span style=\"color:{col};font-family:'Roboto Condensed','Roboto',sans-serif;font-weight:700;font-size:11px;letter-spacing:0.165px;\">D{ch}</span>"
+                f"&nbsp;&nbsp;&nbsp;<span style=\"font-family:'Roboto',sans-serif;font-size:13px;font-weight:500;letter-spacing:0.065px;color:{T.TEXT};\">{name}</span>"
             )
+
+    def _show_channel_menu(self, ch: int, button: QtWidgets.QToolButton):
+        """Mở menu ngữ cảnh tùy chọn cho kênh số."""
+        menu = QtWidgets.QMenu(self)
+        menu.setStyleSheet(f"""
+            QMenu {{
+                background-color: {T.BG_CARD};
+                border: 1px solid {T.BORDER_MUTED};
+                border-radius: 4px;
+                padding: 4px 0px;
+            }}
+            QMenu::item {{
+                background-color: transparent;
+                color: {T.TEXT};
+                padding: 6px 20px 6px 12px;
+                font-family: 'Roboto', sans-serif;
+                font-size: 12px;
+            }}
+            QMenu::item:selected {{
+                background-color: {T.BG_SELECT};
+                color: #ffffff;
+            }}
+            QMenu::separator {{
+                height: 1px;
+                background-color: {T.BORDER_MUTED};
+                margin: 4px 6px;
+            }}
+        """)
+        act_rename = menu.addAction(f"Rename Channel {ch}...")
+        vis = self.channel_visible[ch]
+        act_toggle = menu.addAction(f"Hide Channel {ch}" if vis else f"Show Channel {ch}")
+        act_reset_h = menu.addAction("Reset Row Height")
+        act_measure = menu.addAction(f"📊 Measure Channel {ch}...")
+        menu.addSeparator()
+        act_trig_none = menu.addAction("Trigger: None (Free-run)")
+        act_trig_rise = menu.addAction(f"Trigger: CH{ch} Rising Edge ↑")
+        act_trig_fall = menu.addAction(f"Trigger: CH{ch} Falling Edge ↓")
+
+        pos = button.mapToGlobal(QtCore.QPoint(0, button.height() + 2))
+        chosen = menu.exec_(pos)
+
+        if chosen == act_rename:
+            curr_name = self.channel_names[ch]
+            new_name, ok = QtWidgets.QInputDialog.getText(
+                self, f"Rename Channel {ch}", "Channel Name:", QtWidgets.QLineEdit.Normal, curr_name
+            )
+            if ok and new_name.strip():
+                self.set_channel_name(ch, new_name.strip())
+                mw = self.window()
+                if hasattr(mw, "ch_name_edits") and ch < len(mw.ch_name_edits):
+                    mw.ch_name_edits[ch].setText(new_name.strip())
+        elif chosen == act_toggle:
+            self.set_channel_visible(ch, not vis)
+        elif chosen == act_reset_h:
+            self.row_heights[ch] = T.CHANNEL_ROW_HEIGHT * (T.DECODER_ROW_SCALE if ch == 0 else 1.0)
+            self._recompute_row_heights()
+        elif chosen in (act_trig_none, act_trig_rise, act_trig_fall):
+            mw = self.window()
+            if hasattr(mw, "combo_ch") and hasattr(mw, "combo_mode"):
+                mw.combo_ch.setCurrentIndex(ch)
+                if chosen == act_trig_none:
+                    mw.combo_mode.setCurrentIndex(0)
+                elif chosen == act_trig_rise:
+                    mw.combo_mode.setCurrentIndex(1)
+                elif chosen == act_trig_fall:
+                    mw.combo_mode.setCurrentIndex(2)
+        elif chosen == act_measure:
+            mw = self.window()
+            if hasattr(mw, "_show_measurements_for_channel"):
+                mw._show_measurements_for_channel(ch)
 
     def set_channel_visible(self, ch: int, visible: bool):
         """Ẩn / hiện một kênh sóng trên đồ thị."""
         if 0 <= ch < 8:
             self.channel_visible[ch] = visible
             self.curves[ch].setVisible(visible)
+            if hasattr(self, "sample_points_items") and ch < len(self.sample_points_items):
+                if not visible:
+                    self.sample_points_items[ch].clear()
+                    self.sample_points_items[ch].setVisible(False)
             self.channel_frames[ch].setVisible(visible)
+            if hasattr(self, "hl_text_items") and ch < len(self.hl_text_items):
+                t_h, t_l = self.hl_text_items[ch]
+                t_h.setVisible(visible)
+                t_l.setVisible(visible)
+            self._update_hardware_sample_points()
 
     def toggle_cursors(self, visible: Optional[bool] = None):
-        """Bật / tắt hiển thị cặp thước đo A & B và HUD."""
+        """Bật / tắt hiển thị cặp thước đo A & B, vùng span và HUD."""
         if visible is None:
             visible = not self.cursor_a.isVisible()
         self.cursor_a.setVisible(visible)
         self.cursor_b.setVisible(visible)
+        self.cursor_region.setVisible(visible)
         self.hud.setVisible(visible)
+        self._update_cursor_span_visibility()
 
     def _on_cursor_moved(self):
         self._update_hud()
@@ -395,6 +1096,18 @@ class WaveformWidget(QtWidgets.QWidget):
         self.cursor_a.label.setText(f"A: {format_si_time(t_a)}")
         self.cursor_b.label.setText(f"B: {format_si_time(t_b)}")
         self.hud.update_values(t_a, t_b)
+
+        # Cập nhật Span Region & Span Bar Text giữa A và B
+        t_min = min(t_a, t_b)
+        t_max = max(t_a, t_b)
+        self.cursor_region.setRegion([t_min, t_max])
+        t_mid = (t_min + t_max) / 2.0
+        freq_str = format_si_freq(1.0 / dt) if dt > 1e-12 else "-- Hz"
+        self.cursor_span_text.setText(f"|← {format_si_time(dt)} ({freq_str}) →|")
+        total_h = sum(self.row_heights) if hasattr(self, "row_heights") and self.row_heights else 400
+        self.cursor_span_text.setPos(t_mid, total_h * 0.84)
+        self._update_cursor_span_visibility()
+
         self.sigCursorChanged.emit(t_a, t_b, dt)
 
     def set_cursor_positions(self, t_a: float, t_b: float):
@@ -419,19 +1132,21 @@ class WaveformWidget(QtWidgets.QWidget):
         return (1.0 / dt) if dt > 1e-12 else 0.0
 
     def render_data(self, res: Dict[str, Any]):
-        """Vẽ 8 kênh dữ liệu lên viewport với mốc thời gian t = 0 tại Trigger."""
+        """Vẽ 8 kênh dữ liệu lên viewport với mốc thời gian t = 0 tại Trigger (mẫu 6554)."""
         self.current_data = res
         sample_rate = float(res["sample_rate"])
         sample_count = int(res["sample_count"])
         trig_offset = int(res["trig_offset"])
         status = res.get("status", 0)
 
-        # Thiết lập vạch trigger và giới hạn thời gian
+        # Thiết lập vạch Trigger màu vàng #fff06a và cờ cam #f18d4b tại mẫu 6554 (t = 0s)
         if status == 0:  # STATUS_TRIGGER_OK
             t_marker = 0.0
             self.trigger_line.setValue(t_marker)
-            self.trigger_line.setPen(pg.mkPen(color=T.TRIGGER_MARKER, width=2, style=QtCore.Qt.SolidLine))
-            self.trigger_line.label.setText("T (0 s)")
+            self.trigger_line.setPen(pg.mkPen(color=T.TRIGGER_LINE, width=1.5, style=QtCore.Qt.SolidLine))
+            self.trigger_line.label.setText("T")
+            self.trigger_line.label.setColor(QtGui.QColor("#ffffff"))
+            self.trigger_line.label.fill = QtGui.QBrush(QtGui.QColor(T.TRIGGER_MARKER))
             self.trigger_line.show()
             x_min = -trig_offset / sample_rate
             x_max = (sample_count - trig_offset) / sample_rate
@@ -439,15 +1154,19 @@ class WaveformWidget(QtWidgets.QWidget):
             t_marker = trig_offset / sample_rate
             self.trigger_line.setValue(t_marker)
             self.trigger_line.setPen(pg.mkPen(color=T.TEXT_DIM, width=1.5, style=QtCore.Qt.DotLine))
-            self.trigger_line.label.setText("FREE-RUN (20%)")
+            self.trigger_line.label.setText("FREE-RUN")
+            self.trigger_line.label.setColor(QtGui.QColor("#ffffff"))
+            self.trigger_line.label.fill = QtGui.QBrush(QtGui.QColor(T.TEXT_DIM))
             self.trigger_line.show()
             x_min = 0.0
             x_max = sample_count / sample_rate
         else:  # STATUS_TIMEOUT
             t_marker = trig_offset / sample_rate
             self.trigger_line.setValue(t_marker)
-            self.trigger_line.setPen(pg.mkPen(color=T.ACCENT_WARN, width=1.8, style=QtCore.Qt.DashDotLine))
+            self.trigger_line.setPen(pg.mkPen(color=T.ACCENT_WARN, width=1.5, style=QtCore.Qt.DashDotLine))
             self.trigger_line.label.setText("TIMEOUT")
+            self.trigger_line.label.setColor(QtGui.QColor("#ffffff"))
+            self.trigger_line.label.fill = QtGui.QBrush(QtGui.QColor(T.ACCENT_WARN))
             self.trigger_line.show()
             x_min = 0.0
             x_max = sample_count / sample_rate
@@ -464,7 +1183,7 @@ class WaveformWidget(QtWidgets.QWidget):
         self.plot_widget.setXRange(x_min, x_max, padding=0.01)
 
     def _update_curve_data(self):
-        """Vẽ các đường sóng theo đúng vị trí hình học của các hàng."""
+        """Vẽ các đường sóng số bằng stepMode='right' và màu theo theme.CHANNEL_COLORS."""
         if not self.current_data:
             return
 
@@ -480,91 +1199,354 @@ class WaveformWidget(QtWidgets.QWidget):
             time_axis = np.arange(sample_count, dtype=np.float64) / sample_rate
 
         y0 = 0
+        active_channels = getattr(self, "active_analyzer_channels", {0})
         for ch in range(8):
             h = self.row_heights[ch]
-            top = y0 + (h - self.row_h) if ch == 0 else y0
-            hi = top + self.row_h * 0.22
-            lo = top + self.row_h * 0.78
+            if ch in active_channels:
+                decoder_space = h - self.row_h
+                wave_top = y0 + decoder_space
+                hi = wave_top + self.row_h * 0.22
+                lo = wave_top + self.row_h * 0.78
+            else:
+                hi = y0 + h * 0.22
+                lo = y0 + h * 0.78
 
             ch_samples = channels[ch]
             yy = np.where(ch_samples == 1, hi, lo)
-            self.curves[ch].setData(x=time_axis, y=yy, stepMode="left")
+            self.curves[ch].setData(x=time_axis, y=yy, stepMode="right")
             self.curves[ch].setVisible(self.channel_visible[ch])
             y0 += h
 
+        self._update_hardware_sample_points()
+
+    def _effective_trig_offset(self, trig_offset: int) -> int:
+        """Chỉ dịch gốc thời gian theo trig_offset khi status == 0 (STATUS_TRIGGER_OK)."""
+        if self.current_data and self.current_data.get("status", 0) != 0:
+            return 0
+        return int(trig_offset)
+
     def render_uart_decorations(self, frames: List[Dict[str, Any]], sample_rate: float, trig_offset: int):
         """
-        Vẽ các ô chú thích giải mã UART và chấm tâm bit (bit center dots) trực tiếp trên sóng Kênh 0
-        đáp ứng 100% mục 5 của UI_SPEC.md.
+        Vẽ các khối giải mã UART trực tiếp trên sóng (SingleBubble & MultiBubble)
+        và các điểm đánh dấu mẫu bit (Protocol Bit Markers) tại tâm nhịp bit.
         """
         self.clear_decoder_decorations()
+        self._uart_frames = list(frames) if frames else []
+        self._uart_sample_rate = sample_rate
+        self._uart_trig_offset = self._effective_trig_offset(trig_offset)
 
         if not frames:
             return
 
-        h0 = self.row_heights[0]
-        bubble_top = h0 * 0.08
-        bubble_h = self.row_h * 0.30
-        bubble_center_y = bubble_top + bubble_h * 0.5
+        self._render_uart_bubbles()
 
+    def _render_uart_bubbles(self):
+        """Dựng các bong bóng UART (SingleBubble hoặc MultiBubble tùy mức Zoom)."""
+        # Xóa các graphics item chú thích cũ
+        for item in self.decode_items:
+            try:
+                self.vb.removeItem(item)
+            except Exception:
+                pass
+        self.decode_items.clear()
+
+        if self.bit_dots_item:
+            try:
+                self.vb.removeItem(self.bit_dots_item)
+            except Exception:
+                pass
+            self.bit_dots_item = None
+
+        if not self._uart_frames:
+            return
+
+        frames = self._uart_frames
+        sample_rate = self._uart_sample_rate
+        trig_offset = self._uart_trig_offset
+
+        h0 = self.row_heights[0]
+        # Chiều cao khối giải mã chuẩn 18px dạng chữ nhật phẳng
+        bubble_h = 18.0
+        decoder_space = max(0, h0 - self.row_h)
+        # Căn giữa khối giải mã trong dải decoder phía trên dạng sóng của CH0
+        bubble_top = max(1.0, (decoder_space - bubble_h) / 2.0)
+
+        # Mức High, Low và trục tâm giữa của track sóng CH0
         top0 = h0 - self.row_h
         hi0 = top0 + self.row_h * 0.22
         lo0 = top0 + self.row_h * 0.78
+        mid0 = (hi0 + lo0) / 2.0
 
-        dot_x: List[float] = []
-        dot_y: List[float] = []
+        ch_color = QtGui.QColor(T.CHANNEL_COLORS[0])
+        err_color = QtGui.QColor("#ea5757")
 
-        # Giới hạn số lượng bong bóng vẽ tối đa để giữ 60 FPS
+        # Kiểm tra tỷ lệ Zoom để quyết định MultiBubble vs SingleBubble
+        vr = self.vb.viewRange()
+        t_span = max(1e-12, vr[0][1] - vr[0][0])
+        vb_w = max(10, self.vb.width())
+        px_per_sample = vb_w / (t_span * sample_rate)
+        px_per_byte = px_per_sample * 87.0  # 1 byte UART ~87 mẫu ở 115200bps / 1MHz
+
+        use_multibubble = (px_per_byte < 18.0 and len(frames) >= 2)
+        self._is_multibubble = use_multibubble
+
+        if use_multibubble:
+            # Gom các gói tin liên tiếp thành các cụm MultiBubble (MultiBubble LOD)
+            clusters: List[List[Dict[str, Any]]] = []
+            current_cluster: List[Dict[str, Any]] = []
+
+            for f in frames[:256]:
+                if not current_cluster:
+                    current_cluster.append(f)
+                else:
+                    prev_f = current_cluster[-1]
+                    prev_stop = prev_f.get("stop_sample", prev_f.get("stop_idx", 0))
+                    curr_start = f.get("start_sample", f.get("start_idx", 0))
+                    # Nếu khoảng cách giữa 2 byte < 2000 mẫu thì gom vào cùng 1 cụm
+                    if curr_start - prev_stop < 2000:
+                        current_cluster.append(f)
+                    else:
+                        clusters.append(current_cluster)
+                        current_cluster = [f]
+            if current_cluster:
+                clusters.append(current_cluster)
+
+            for cluster in clusters:
+                if len(cluster) >= 2:
+                    s_idx = cluster[0].get("start_sample", cluster[0].get("start_idx", 0))
+                    e_idx = cluster[-1].get("stop_sample", cluster[-1].get("stop_idx", s_idx + 10))
+                    t_start = (s_idx - trig_offset) / sample_rate
+                    t_stop = (e_idx - trig_offset) / sample_rate
+
+                    chars = ''.join(c.get('char', '') for c in cluster if 32 <= ord(c.get('char', ' ')[0]) <= 126)
+                    preview = f"'{chars}'" if chars else f"0x{cluster[0].get('byte_val', cluster[0].get('val', 0)):02X}..."
+                    tip = f"MultiBubble: {len(cluster)} packets\nStart: {format_si_time(t_start)}\nDuration: {format_si_time(t_stop - t_start)}\nContent: {chars}"
+
+                    mb = MultiBubbleItem(
+                        t_start=t_start,
+                        t_stop=t_stop,
+                        y_top=bubble_top,
+                        height=bubble_h,
+                        count=len(cluster),
+                        preview_text=preview,
+                        bg_color=T.DECODE_UART_BG,
+                        text_color=T.DECODE_UART_FG,
+                        tooltip=tip,
+                        on_clicked=lambda s_abs=s_idx/sample_rate, e_abs=e_idx/sample_rate: self.zoom_to_window(s_abs, e_abs)
+                    )
+                    mb.setZValue(30)
+                    self.vb.addItem(mb)
+                    self.decode_items.append(mb)
+                else:
+                    f = cluster[0]
+                    s_idx = f.get("start_sample", f.get("start_idx", 0))
+                    e_idx = f.get("stop_sample", f.get("stop_idx", s_idx + 10))
+                    val = f.get("byte_val", f.get("val", 0))
+                    char = f.get("char", "")
+                    t_start = (s_idx - trig_offset) / sample_rate
+                    t_stop = (e_idx - trig_offset) / sample_rate
+                    sb = PillBubbleItem(
+                        t_start=t_start,
+                        t_stop=t_stop,
+                        y_top=bubble_top,
+                        height=bubble_h,
+                        text=f"0x{val:02X}",
+                        bg_color=T.DECODE_UART_BG,
+                        text_color=T.DECODE_UART_FG,
+                        radius=0.0,
+                        on_clicked=lambda s_abs=s_idx/sample_rate, e_abs=e_idx/sample_rate: self.zoom_to_window(s_abs, e_abs)
+                    )
+                    sb.setZValue(30)
+                    self.vb.addItem(sb)
+                    self.decode_items.append(sb)
+            return
+
+        # SingleBubble Mode (khi Zoom vừa & gần):
+        bit_dots_x: List[float] = []
+        bit_dots_y: List[float] = []
+        bit_dots_brushes: List[QtGui.QBrush] = []
+
         max_bubbles = min(len(frames), 256)
 
-        for frame in frames[:max_bubbles]:
+        for frame_i, frame in enumerate(frames[:max_bubbles]):
             start_idx = frame.get("start_sample", frame.get("start_idx", 0))
             stop_idx = frame.get("stop_sample", frame.get("stop_idx", start_idx + 10))
             val = frame.get("byte_val", frame.get("val", 0))
             char = frame.get("char", "")
 
-            # Thời gian thực tế quy đổi theo trigger
+            # Thời gian thực tế quy đổi theo trigger (t = 0 tại trigger)
             t_start = (start_idx - trig_offset) / sample_rate
             t_stop = (stop_idx - trig_offset) / sample_rate
-            dt = t_stop - t_start
 
-            # 1. Vẽ ô chữ nhật bo góc màu DECODE_UART_BG
-            rect_item = QtWidgets.QGraphicsRectItem(t_start, bubble_top, dt, bubble_h)
-            rect_item.setBrush(pg.mkBrush(T.DECODE_UART_BG))
-            rect_item.setPen(pg.mkPen(None))
-            self.vb.addItem(rect_item)
-            self.decode_items.append(rect_item)
-
-            # 2. Vẽ nhãn văn bản (Hex + ASCII)
-            text_str = f"0x{val:02X}"
+            text_full = f"0x{val:02X}"
             if char and 32 <= ord(char[0]) <= 126:
-                text_str += f" '{char}'"
-            txt_item = pg.TextItem(text_str, color=T.DECODE_UART_FG, anchor=(0.5, 0.5))
-            txt_item.setFont(QtGui.QFont("Segoe UI", 8, QtGui.QFont.Bold))
-            txt_item.setPos((t_start + t_stop) / 2, bubble_center_y)
-            self.vb.addItem(txt_item)
-            self.decode_items.append(txt_item)
+                text_full += f" '{char}'"
+            text_mid = f"0x{val:02X}"
+            text_short = f"'{char}'" if (char and 32 <= ord(char[0]) <= 126) else f"{val:02X}"
 
-            # 3. Tính toán chấm trắng tại tâm mỗi bit dữ liệu (Bit center dots)
+            tip_str = f"Byte: 0x{val:02X} ('{char}')\nStart: {format_si_time(t_start)}\nDuration: {format_si_time(t_stop - t_start)}"
+
+            bubble = PillBubbleItem(
+                t_start=t_start,
+                t_stop=t_stop,
+                y_top=bubble_top,
+                height=bubble_h,
+                text=text_full,
+                bg_color=T.DECODE_UART_BG,
+                text_color=T.DECODE_UART_FG,
+                radius=0.0,
+                tooltip=tip_str,
+                text_mid=text_mid,
+                text_short=text_short,
+                raw_data=frame,
+                on_clicked=lambda s=start_idx/sample_rate, e=stop_idx/sample_rate: self.zoom_to_window(s, e),
+                on_ctrl_clicked=lambda idx=frame_i, f=frame: self.sigBubbleCtrlClicked.emit(idx, f)
+            )
+            bubble.setZValue(30)
+            self.vb.addItem(bubble)
+            self.decode_items.append(bubble)
+
+            # Protocol Bit Markers (Loại B): Đánh dấu thời điểm lấy mẫu tâm bit (Mid-bit sampling)
             bit_len_idx = (stop_idx - start_idx) / 10.0
-            data_bits = frame.get("bit_samples", frame.get("data_bits", []))
+
+            # 1. Start bit marker (tại 50% độ rộng bit Start)
+            t_start_bit = (start_idx + 0.5 * bit_len_idx - trig_offset) / sample_rate
+            bit_dots_x.append(t_start_bit)
+            bit_dots_y.append(mid0)
+            bit_dots_brushes.append(QtGui.QBrush(ch_color))
+
+            # 2. 8 Data bit markers (tại 50% độ rộng từng bit dữ liệu)
             for bit_i in range(8):
                 center_idx = start_idx + (bit_i + 1.5) * bit_len_idx
                 t_center = (center_idx - trig_offset) / sample_rate
-                bit_val = data_bits[bit_i] if bit_i < len(data_bits) else ((val >> bit_i) & 1)
-                dot_x.append(t_center)
-                dot_y.append(hi0 if bit_val else lo0)
+                bit_dots_x.append(t_center)
+                bit_dots_y.append(mid0)
+                bit_dots_brushes.append(QtGui.QBrush(ch_color))
 
-        # Vẽ chấm trắng bằng ScatterPlotItem
-        if dot_x:
+            # 3. Stop bit marker (tại 50% độ rộng bit Stop)
+            t_stop_bit = (start_idx + 9.5 * bit_len_idx - trig_offset) / sample_rate
+            bit_dots_x.append(t_stop_bit)
+            bit_dots_y.append(mid0)
+            is_error = frame.get("error", False)
+            bit_dots_brushes.append(QtGui.QBrush(err_color if is_error else ch_color))
+
+        if bit_dots_x:
             self.bit_dots_item = pg.ScatterPlotItem(
-                x=dot_x,
-                y=dot_y,
-                size=5,
-                brush=pg.mkBrush(T.TEXT),
-                pen=pg.mkPen(None)
+                x=bit_dots_x,
+                y=bit_dots_y,
+                size=4,
+                brush=bit_dots_brushes,
+                pen=pg.mkPen(None),
+                pxMode=True
             )
+            self.bit_dots_item.setZValue(35)
             self.vb.addItem(self.bit_dots_item)
+
+    def render_i2c_decorations(self, frames: List[Dict[str, Any]], sample_rate: float, trig_offset: int):
+        """Vẽ khối giải mã I2C dạng chữ nhật (#4060c0) trên dòng sóng Kênh 2 (SDA)."""
+        self.clear_decoder_decorations()
+        if not frames:
+            return
+
+        eff_offset = self._effective_trig_offset(trig_offset)
+        ch_target = 2
+        y0 = sum(self.row_heights[:ch_target])
+        h_target = self.row_heights[ch_target]
+        decoder_space = max(0, h_target - self.row_h)
+        bubble_h = 18.0
+        bubble_top = y0 + max(1.0, (decoder_space - bubble_h) / 2.0)
+
+        max_bubbles = min(len(frames), 256)
+        for f in frames[:max_bubbles]:
+            s_idx = f.get("start_sample", 0)
+            e_idx = f.get("stop_sample", s_idx + 10)
+            f_type = str(f.get("type", "data")).upper()
+            val = f.get("val")
+
+            t_start = (s_idx - eff_offset) / sample_rate
+            t_stop = (e_idx - eff_offset) / sample_rate
+
+            if "START" in f_type:
+                txt = "START"
+            elif f_type == "STOP":
+                txt = "STOP"
+            elif f_type == "ADDRESS":
+                rw_str = "R" if f.get("rw") == "R" or f.get("read") else "W"
+                txt = f"0x{val:02X} {rw_str}" if val is not None else "ADDR"
+            else:
+                txt = f"0x{val:02X}" if val is not None else f_type
+
+            tip = f"I2C {f_type}: {f.get('desc', txt)}\nStart: {format_si_time(t_start)}\nDuration: {format_si_time(t_stop - t_start)}"
+
+            bubble = PillBubbleItem(
+                t_start=t_start,
+                t_stop=t_stop,
+                y_top=bubble_top,
+                height=bubble_h,
+                text=txt,
+                bg_color=T.DECODE_I2C_BG,
+                text_color=T.DECODE_I2C_FG,
+                radius=0.0,
+                tooltip=tip,
+                on_clicked=lambda s_abs=s_idx/sample_rate, e_abs=e_idx/sample_rate: self.zoom_to_window(s_abs, e_abs)
+            )
+            bubble.setZValue(30)
+            self.vb.addItem(bubble)
+            self.decode_items.append(bubble)
+
+    def render_spi_decorations(self, frames: List[Dict[str, Any]], sample_rate: float, trig_offset: int):
+        """Vẽ khối giải mã SPI dạng chữ nhật (#53a9fd) trên Kênh 4 (MOSI)."""
+        self.clear_decoder_decorations()
+        if not frames:
+            return
+
+        eff_offset = self._effective_trig_offset(trig_offset)
+        ch_target = 4
+        y0 = sum(self.row_heights[:ch_target])
+        h_target = self.row_heights[ch_target]
+        decoder_space = max(0, h_target - self.row_h)
+        bubble_h = 18.0
+        bubble_top = y0 + max(1.0, (decoder_space - bubble_h) / 2.0)
+
+        max_bubbles = min(len(frames), 256)
+        for f in frames[:max_bubbles]:
+            s_idx = f.get("start_sample", 0)
+            e_idx = f.get("stop_sample", s_idx + 10)
+            mv = f.get("mosi_val", 0)
+            sv = f.get("miso_val", 0)
+
+            t_start = (s_idx - eff_offset) / sample_rate
+            t_stop = (e_idx - eff_offset) / sample_rate
+
+            txt = f"M:0x{mv:02X}"
+            tip = f"SPI Byte\nMOSI: 0x{mv:02X}\nMISO: 0x{sv:02X}\nStart: {format_si_time(t_start)}"
+
+            bubble = PillBubbleItem(
+                t_start=t_start,
+                t_stop=t_stop,
+                y_top=bubble_top,
+                height=bubble_h,
+                text=txt,
+                bg_color="#53a9fd",
+                text_color="#1b1b1c",
+                radius=0.0,
+                tooltip=tip,
+                on_clicked=lambda s_abs=s_idx/sample_rate, e_abs=e_idx/sample_rate: self.zoom_to_window(s_abs, e_abs)
+            )
+            bubble.setZValue(30)
+            self.vb.addItem(bubble)
+            self.decode_items.append(bubble)
+
+    def set_analyzer_channel(self, ch: int, name: str, color: str = T.DECODE_UART_BG):
+        """Thiết lập kênh số có analyzer và tăng chiều cao 1.35x."""
+        self.active_analyzer_channels = {ch}
+        for i in range(8):
+            if i == ch:
+                self.channel_chips[i].setText(f"<span style='color:{color};font-size:9px;'>■</span> &nbsp;{name}")
+                self.channel_chips[i].setVisible(True)
+            else:
+                self.channel_chips[i].setVisible(False)
+        self._recompute_row_heights()
 
     def clear_decoder_decorations(self):
         """Xóa toàn bộ các bong bóng chú thích và chấm bit trên đồ thị."""
@@ -581,6 +1563,21 @@ class WaveformWidget(QtWidgets.QWidget):
             except Exception:
                 pass
             self.bit_dots_item = None
+
+    def clear_data(self):
+        """Xóa sạch dữ liệu hiển thị trên đồ thị, ẩn vạch trigger và chú thích."""
+        self.current_data = None
+        self._uart_frames = []
+        self._is_multibubble = False
+        for curve in self.curves:
+            curve.clear()
+        if hasattr(self, "sample_points_items"):
+            for sp in self.sample_points_items:
+                sp.clear()
+                sp.setVisible(False)
+        self.trigger_line.hide()
+        self.clear_decoder_decorations()
+        self.plot_widget.setXRange(0.0, 0.032768, padding=0)
 
     def zoom_fit(self):
         """Khôi phục góc nhìn toàn bộ dữ liệu mẫu."""
@@ -617,3 +1614,4 @@ class WaveformWidget(QtWidgets.QWidget):
 
         dur = max(t2 - t1, 0.00004)
         self.plot_widget.setXRange(t1 - dur * 0.4, t2 + dur * 0.4, padding=0)
+        self.set_cursor_positions(t1, t2)

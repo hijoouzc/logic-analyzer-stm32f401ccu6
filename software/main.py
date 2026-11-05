@@ -23,6 +23,7 @@ if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
 from PyQt5 import QtCore, QtGui, QtWidgets
+from software.gui import theme as T
 from software.gui.main_window import MainWindow
 
 
@@ -36,6 +37,7 @@ def main():
     app = QtWidgets.QApplication(sys.argv)
     app.setApplicationName("STM32 Logic Analyzer")
     app.setOrganizationName("HUST - Embedded Systems")
+    T.apply_theme(app)
 
     # 2. Xử lý tín hiệu Ctrl+C từ terminal để đóng ứng dụng mượt mà
     signal.signal(signal.SIGINT, signal.SIG_DFL)

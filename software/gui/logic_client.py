@@ -30,7 +30,7 @@ class LogicAnalyzerClient:
         {"idx": 8, "freq":    10_000, "label": "10 kHz (ARR=8399)"},
     ]
 
-    # Kiểu kích hoạt Trigger (Chuẩn công nghiệp Saleae / DSView)
+    # Kiểu kích hoạt Trigger (Chuẩn giao thức nhị phân spec/protocol.md)
     TRIG_MODES = [
         {"mode": 0, "name": "Free-run (No Trigger)"},
         {"mode": 1, "name": "Rising Edge (↑)"},
@@ -59,6 +59,7 @@ class LogicAnalyzerClient:
         self.port_name: str = ""
         self.baudrate: int = 115200
         self.is_offline_mock: bool = False
+        self._abort_requested: bool = False
 
     @property
     def is_connected(self) -> bool:
@@ -91,10 +92,11 @@ class LogicAnalyzerClient:
             return True, "Đã kết nối chế độ Offline Mock (sample_data_1mhz.bin)"
 
         try:
-            self.ser = serial.Serial(port, baudrate=baudrate, timeout=timeout)
+            self.ser = serial.Serial(port, baudrate=baudrate, timeout=0.1)
             self.port_name = port
             self.baudrate = baudrate
             self.is_offline_mock = False
+            self._abort_requested = False
             self.ser.reset_input_buffer()
             self.ser.reset_output_buffer()
             time.sleep(0.05)
@@ -179,10 +181,15 @@ class LogicAnalyzerClient:
         """Bí danh chuẩn thương mại cho ping()."""
         return self.ping()
 
+    def request_abort(self):
+        """Đặt cờ yêu cầu hủy thu thập an toàn từ luồng GUI."""
+        self._abort_requested = True
+
     def abort(self) -> Tuple[bool, str]:
         """
         Gửi lệnh CMD_ABORT (0x02) dừng khẩn cấp capture và reset FSM về IDLE.
         """
+        self._abort_requested = True
         if not self.is_connected:
             return False, "Chưa kết nối cổng serial!"
 
@@ -196,7 +203,7 @@ class LogicAnalyzerClient:
             self.ser.write(cmd)
             self.ser.flush()
 
-            resp = self._read_exact(7, timeout_s=1.5)
+            resp = self._read_exact(7, timeout_s=1.0)
             if len(resp) == 7 and resp[0] == 0x5A and resp[1] == 0xA5 and resp[2] == 0x05:
                 return True, "Đã gửi lệnh ABORT và MCU đã khôi phục về IDLE an toàn."
             return True, "Đã phát lệnh ABORT (MCU không phản hồi khung 7B nhưng đã reset luồng)."
@@ -254,6 +261,7 @@ class LogicAnalyzerClient:
         cmd_bytes = bytes([0xA5, 0x01, rate_idx, trig_cfg, checksum])
 
         # 3. Gửi lệnh
+        self._abort_requested = False
         try:
             self.ser.reset_input_buffer()
             self.ser.write(cmd_bytes)
@@ -267,6 +275,9 @@ class LogicAnalyzerClient:
         # protocol.md mục 4.1: Tìm cặp đồng bộ 0x5A, 0xA5 -> Đọc 7 Bytes đầu
         raw_7b = bytearray()
         while len(raw_7b) < 7:
+            if self._abort_requested:
+                self.abort()
+                return {"success": False, "error": "Đã hủy thu thập dữ liệu theo yêu cầu người dùng."}
             if time.time() - t_start > timeout_gui:
                 return {
                     "success": False,
@@ -287,6 +298,11 @@ class LogicAnalyzerClient:
         if code in (0x04, 0x05, 0xE0, 0xE1, 0xE2, 0xE3):
             csum = raw_7b[6]
             calc_csum = raw_7b[0] ^ raw_7b[1] ^ raw_7b[2] ^ raw_7b[3] ^ raw_7b[4] ^ raw_7b[5]
+            if csum != calc_csum:
+                return {
+                    "success": False,
+                    "error": f"Sai Checksum Control Frame: nhận 0x{csum:02X}, tính 0x{calc_csum:02X}"
+                }
             err_msg = self.RSP_CODES.get(code, f"Lỗi Control Frame mã 0x{code:02X}")
             return {
                 "success": False,
@@ -309,6 +325,9 @@ class LogicAnalyzerClient:
         remaining_count = 32769
         rest_data = bytearray()
         while len(rest_data) < remaining_count:
+            if self._abort_requested:
+                self.abort()
+                return {"success": False, "error": "Đã hủy thu thập dữ liệu theo yêu cầu người dùng."}
             if time.time() - t_start > timeout_gui + 2.0:
                 return {
                     "success": False,
@@ -325,11 +344,9 @@ class LogicAnalyzerClient:
         payload_bytes = rest_data[:32768]
         footer_csum = rest_data[32768]
 
-        # Kiểm tra Checksum XOR của toàn bộ 32KB payload
+        # Kiểm tra Checksum XOR của toàn bộ 32KB payload bằng NumPy vectorization
         payload_np = np.frombuffer(payload_bytes, dtype=np.uint8)
-        calc_csum = 0
-        for b in payload_bytes:
-            calc_csum ^= b
+        calc_csum = int(np.bitwise_xor.reduce(payload_np))
 
         checksum_ok = (calc_csum == footer_csum)
         if not checksum_ok:
@@ -399,15 +416,13 @@ class LogicAnalyzerClient:
             payload_bytes = data[7:32775]
             footer_csum = data[32775]
 
-            # Kiểm tra Checksum XOR
-            calc_csum = 0
-            for b in payload_bytes:
-                calc_csum ^= b
+            # Kiểm tra Checksum XOR bằng NumPy vectorization
+            payload_np = np.frombuffer(payload_bytes, dtype=np.uint8)
+            calc_csum = int(np.bitwise_xor.reduce(payload_np))
 
             if calc_csum != footer_csum:
                 return {"success": False, "error": f"Sai Checksum: nhận 0x{footer_csum:02X}, tính 0x{calc_csum:02X}"}
 
-            payload_np = np.frombuffer(payload_bytes, dtype=np.uint8)
             channels = [((payload_np >> ch) & 1).astype(np.uint8) for ch in range(8)]
 
             return {

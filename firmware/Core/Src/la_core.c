@@ -26,7 +26,17 @@ extern DMA_HandleTypeDef hdma_tim1_up;
 #endif
 
 /* Bộ đệm vòng 32 KB nằm trong SRAM STM32F401CCU6 (64 KB tổng, căn lề 4 byte) */
-uint8_t la_capture_buffer[LA_BUFFER_SIZE] __attribute__((aligned(4)));
+static uint8_t la_capture_buffer[LA_BUFFER_SIZE] __attribute__((aligned(4)));
+
+/* Điều khiển LED trạng thái PC13 (Active Low trên WeAct Black Pill V3.0) */
+static inline void la_set_led_active(bool active)
+{
+#if defined(LED_STATUS_GPIO_Port) && defined(LED_STATUS_Pin)
+    HAL_GPIO_WritePin(LED_STATUS_GPIO_Port, LED_STATUS_Pin, active ? GPIO_PIN_RESET : GPIO_PIN_SET);
+#else
+    (void)active;
+#endif
+}
 
 /* Biến trạng thái máy trạng thái FSM */
 static volatile la_state_t g_la_state = LA_STATE_IDLE;
@@ -68,6 +78,7 @@ void la_core_init(void)
     g_la_state = LA_STATE_IDLE;
     g_captured_write_pos = 0;
     g_captured_status = LA_STATUS_FREERUN_OK;
+    la_set_led_active(false);
 
 #if defined(TIM1)
     /* 1. Cấu hình chu kỳ đếm Post-trigger cho TIM2 (đếm đúng 26.214 mẫu) */
@@ -139,18 +150,25 @@ bool la_core_start_capture(uint8_t rate_idx, uint8_t trig_cfg)
     g_la_state = LA_STATE_ARMED;
 
 #if defined(TIM1)
-    /* 1. Dừng an toàn các Timer và DMA nếu đang chạy */
+    /* 1. Dừng an toàn các Timer và DMA nếu đang chạy (đợi bit EN về 0 theo RM0368 9.3.17) */
     TIM1->CR1 &= ~TIM_CR1_CEN;
     TIM2->CR1 &= ~TIM_CR1_CEN;
     DMA2_Stream5->CR &= ~DMA_SxCR_EN;
+    while (DMA2_Stream5->CR & DMA_SxCR_EN) {
+        /* Đợi giao dịch AHB cuối cùng hoàn tất */
+    }
 
-    /* 2. Cấu hình tần số lấy mẫu trên TIM1 */
+    /* 2. Cấu hình tần số lấy mẫu trên TIM1 và nạp ngay vào Shadow Register (vì ARPE=1) */
     TIM1->ARR = TIM1_ARR_TABLE[rate_idx];
     TIM1->CNT = 0;
+    TIM1->EGR = TIM_EGR_UG;
+    TIM1->SR  = 0;
 
-    /* 3. Cấu hình đếm 26.214 mẫu trên TIM2 One-Pulse */
+    /* 3. Cấu hình đếm 26.214 mẫu trên TIM2 One-Pulse và xóa cờ tồn dư */
     TIM2->ARR = LA_POST_TRIGGER_SAMPLES - 1; /* 26213 */
     TIM2->CNT = 0;
+    TIM2->EGR = TIM_EGR_UG;
+    TIM2->SR  = 0;
 
     /* 4. Khóa toàn bộ ngắt EXTI trong giai đoạn Pre-trigger (chống rỗng pre-trigger) */
     EXTI->IMR &= ~0x00FFU;
@@ -165,16 +183,19 @@ bool la_core_start_capture(uint8_t rate_idx, uint8_t trig_cfg)
     /* 6. Khởi động DMA2 Stream 5 đọc trực tiếp từ GPIOA->IDR vào buffer 32KB vòng */
     if (HAL_DMA_Start_IT(&hdma_tim1_up, (uint32_t)&(GPIOA->IDR), (uint32_t)la_capture_buffer, LA_BUFFER_SIZE) != HAL_OK) {
         g_la_state = LA_STATE_IDLE;
+        la_set_led_active(false);
         return false;
     }
 
     /* 7. Cho phép TIM1 phát yêu cầu DMA Update (bit UDE) */
     __HAL_TIM_ENABLE_DMA(&htim1, TIM_DMA_UPDATE);
 
-    /* 8. Chuyển FSM sang PRE_SAMPLING và kích hoạt TIM1 lấy mẫu */
+    /* 8. Bật LED trạng thái, chuyển FSM sang PRE_SAMPLING và kích hoạt TIM1 lấy mẫu */
+    la_set_led_active(true);
     g_la_state = LA_STATE_PRE_SAMPLING;
     __HAL_TIM_ENABLE(&htim1);
 #else
+    la_set_led_active(true);
     g_la_state = LA_STATE_PRE_SAMPLING;
 #endif
 
@@ -188,6 +209,8 @@ void la_core_abort(void)
     TIM1->CR1 &= ~TIM_CR1_CEN;
     TIM2->CR1 &= ~TIM_CR1_CEN;
     DMA2_Stream5->CR &= ~DMA_SxCR_EN;
+    while (DMA2_Stream5->CR & DMA_SxCR_EN) {
+    }
 
     /* Khóa ngắt EXTI */
     EXTI->IMR &= ~0x00FFU;
@@ -199,6 +222,7 @@ void la_core_abort(void)
     hdma_tim1_up.State = HAL_DMA_STATE_READY;
     __HAL_UNLOCK(&hdma_tim1_up);
 #endif
+    la_set_led_active(false);
     g_la_state = LA_STATE_IDLE;
 }
 
@@ -263,8 +287,10 @@ void la_core_on_tim2_period_elapsed_isr(void)
         /* Dừng TIM1 ngay lập tức */
         TIM1->CR1 &= ~TIM_CR1_CEN;
 
-        /* Dừng DMA2 Stream 5 */
+        /* Dừng DMA2 Stream 5 và đợi thanh ghi NDTR ổn định */
         DMA2_Stream5->CR &= ~DMA_SxCR_EN;
+        while (DMA2_Stream5->CR & DMA_SxCR_EN) {
+        }
 
         /* Lưu vị trí con trỏ ghi DMA hiện tại (vị trí mẫu cũ nhất t0) */
         uint16_t ndtr = (uint16_t)(DMA2_Stream5->NDTR);
@@ -293,6 +319,8 @@ void la_core_on_systick_tick(void)
 #if defined(TIM1)
             TIM1->CR1 &= ~TIM_CR1_CEN;
             DMA2_Stream5->CR &= ~DMA_SxCR_EN;
+            while (DMA2_Stream5->CR & DMA_SxCR_EN) {
+            }
 
             uint16_t ndtr = (uint16_t)(DMA2_Stream5->NDTR);
             g_captured_write_pos = (LA_BUFFER_SIZE - ndtr) % LA_BUFFER_SIZE;
@@ -314,6 +342,7 @@ void la_core_process(void)
         /* Thực hiện đóng gói 32.776 Bytes xoay vòng từ g_captured_write_pos và truyền qua USB-CDC phân đoạn 512B */
         la_protocol_send_data_frame(g_captured_status, LA_TRIG_OFFSET_DEFAULT, la_capture_buffer, g_captured_write_pos);
 
+        la_set_led_active(false);
         g_la_state = LA_STATE_IDLE;
     }
 }

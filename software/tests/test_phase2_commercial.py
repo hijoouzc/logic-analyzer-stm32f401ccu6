@@ -27,7 +27,7 @@ from software.gui.logic_client import LogicAnalyzerClient
 from software.decoders.uart_decoder import UARTDecoder
 from software.decoders.i2c_decoder import I2CDecoder
 from software.decoders.spi_decoder import SPIDecoder
-from software.gui.cursors import CursorManager, CursorHUDWidget, format_time, format_freq
+from software.gui.waveform_widget import format_si_time as format_time, format_si_freq as format_freq
 from software.utils.exporter import export_image, export_csv, export_vcd
 from software.gui.main_window import MainWindow
 
@@ -111,7 +111,7 @@ def test_phase2():
     # 4. Kiểm thử Exporter (PNG, CSV, VCD)
     print("\n[TEST 4] Kiểm thử Exporter (PNG, CSV, VCD)...")
     app = QtWidgets.QApplication.instance() or QtWidgets.QApplication(sys.argv)
-    win = MainWindow()
+    win = MainWindow(load_sample_on_start=True)
 
     with tempfile.TemporaryDirectory() as tmpdir:
         img_file = os.path.join(tmpdir, "wave.png")
@@ -163,6 +163,40 @@ def test_phase2():
     assert "TEST_LA_2026" in win.txt_uart_decoded.toPlainText()
     assert win.table_uart_frames.rowCount() == 14
     print("-> [PASS] Giao diện GUI giải mã UART hiển thị 14 ký tự 'TEST_LA_2026\\r\\n'!")
+
+    # 7. Kiểm thử hồi quy (Regression Tests) cho các lỗi High/Medium đã sửa
+    print("\n[TEST 7] Kiểm thử Hồi Quy: Free-run Time Alignment, MultiBubble Click & I2C START/STOP...")
+    # 7a. Kiểm tra I2C START và STOP có độ rộng > 0 để vẽ được bong bóng
+    for f in i2c_frames:
+        if f["type"] in ("START", "REPEATED_START", "STOP"):
+            assert f["stop_sample"] > f["start_sample"], f"I2C {f['type']} phải có độ rộng > 0 mẫu!"
+
+    # 7b. Kiểm tra MultiBubble click không bị trừ trig_offset 2 lần
+    win.waveform.plot_widget.setXRange(-0.01, 0.03, padding=0)  # Zoom xa để kích hoạt MultiBubble
+    win.waveform._render_uart_bubbles()
+    assert win.waveform._is_multibubble is True
+    assert len(win.waveform.decode_items) >= 1
+    first_mb = win.waveform.decode_items[0]
+    expected_t_start = first_mb.t_start
+    expected_t_stop = first_mb.t_stop
+    first_mb.on_clicked()
+    c_a = float(win.waveform.cursor_a.value())
+    assert abs(c_a - expected_t_start) < 1e-9, f"MultiBubble click bị lệch: {c_a} != {expected_t_start}"
+
+    # 7c. Kiểm tra chế độ Free-run (status == 1) đồng bộ gốc thời gian giữa sóng và bong bóng
+    freerun_data = dict(win.current_data)
+    freerun_data["status"] = 1
+    freerun_data["trig_offset"] = 6554
+    win._render_capture_data(freerun_data)
+    win.waveform.plot_widget.setXRange(0.0, 0.002, padding=0)  # Zoom gần để dùng SingleBubble
+    win.waveform._render_uart_bubbles()
+    first_frame = win.current_uart_frames[0]
+    expected_freerun_t = first_frame["start_sample"] / float(freerun_data["sample_rate"])
+    first_sb = win.waveform.decode_items[0]
+    assert abs(first_sb.t_start - expected_freerun_t) < 1e-9, (
+        f"Free-run bubble bị lệch trục thời gian: {first_sb.t_start} != {expected_freerun_t}"
+    )
+    print("-> [PASS] Free-run Time Alignment, MultiBubble Click Zoom và I2C START/STOP chuẩn xác 100%!")
 
     print("\n==================================================")
     print("  [SUCCESS] 100% CÁC BÀI KIỂM THỬ GIAI ĐOẠN 2 ĐẠT PASS!")

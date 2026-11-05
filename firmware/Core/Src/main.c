@@ -109,6 +109,7 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
+    la_protocol_process();
     la_core_process();
     la_testgen_process();
   }

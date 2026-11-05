@@ -130,18 +130,16 @@ def export_vcd(data_dict: Dict[str, Any], filepath: str) -> bool:
                 f.write(f"{val}{vcd_symbols[ch]}\n")
             f.write("$end\n")
 
-            # 3. Quét sự kiện chuyển mức và ghi vào tệp
-            for i in range(1, sample_count):
-                time_ns = i * sample_period_ns
-                time_written = False
-                for ch in range(8):
-                    curr_val = int(channels[ch][i])
-                    if curr_val != last_vals[ch]:
-                        if not time_written:
-                            f.write(f"#{time_ns}\n")
-                            time_written = True
-                        f.write(f"{curr_val}{vcd_symbols[ch]}\n")
-                        last_vals[ch] = curr_val
+            # 3. Quét sự kiện chuyển mức bằng NumPy vectorization và ghi vào tệp
+            mat = np.column_stack([np.asarray(channels[ch][:sample_count], dtype=np.uint8) for ch in range(8)])
+            diffs = mat[1:] != mat[:-1]
+            changed_rows = np.where(np.any(diffs, axis=1))[0] + 1
+            for i in changed_rows:
+                time_ns = int(i) * sample_period_ns
+                f.write(f"#{time_ns}\n")
+                for ch in np.where(diffs[i - 1])[0]:
+                    curr_val = int(mat[i, ch])
+                    f.write(f"{curr_val}{vcd_symbols[ch]}\n")
 
         return True
     except Exception as e:

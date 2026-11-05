@@ -31,7 +31,7 @@ if project_root not in sys.path:
 
 from software.gui.logic_client import LogicAnalyzerClient
 from software.decoders.uart_decoder import UARTDecoder
-from software.gui.cursors import format_time, format_freq
+from software.gui.waveform_widget import format_si_time as format_time, format_si_freq as format_freq
 from software.utils.exporter import export_csv, export_vcd
 
 
@@ -96,6 +96,42 @@ def run_full_hardware_test(port="/dev/ttyACM0"):
     assert ok_abort, f"Lỗi lệnh ABORT: {msg_abort}"
     print("  [2.4] Lệnh ABORT (0x02) dừng khẩn cấp FSM: PASS")
 
+    # 2.5 Corner Case: Gửi 2 lệnh liên tiếp trong cùng 1 gói USB Bulk OUT (Multi-Command Burst)
+    # Gửi PING + ABORT (10 bytes liền nhau) -> Firmware phải xử lý tuần tự trong Thread mode không bị treo!
+    burst_cmds = bytes([0xA5, 0x03, 0x00, 0x00, 0xA6, 0xA5, 0x02, 0x00, 0x00, 0xA7])
+    client.ser.reset_input_buffer()
+    client.ser.write(burst_cmds)
+    client.ser.flush()
+    resp_burst = client._read_exact(14, timeout_s=1.5)
+    assert len(resp_burst) == 14, f"Không nhận đủ 14B phản hồi cho 2 lệnh liền nhau (nhận {len(resp_burst)}B)"
+    assert resp_burst[2] == 0x04 and resp_burst[9] == 0x05, f"Sai mã phản hồi Burst: {resp_burst.hex()}"
+    print("  [2.5] Gửi dồn 2 lệnh trong 1 gói USB (PING + ABORT = 10B) -> Trả đủ 14B (PONG + ABORT_ACK) không treo ISR: PASS")
+
+    # 2.6 Corner Case: State Machine Busy Protection (WAIT_TRIGGER -> PING / START / ABORT)
+    # Khởi động capture chờ cạnh xuống trên CH7 (không có xung -> MCU đứng ở WAIT_TRIGGER)
+    cmd_start_ch7 = bytes([0xA5, 0x01, 0x03, (7 << 4) | 0x02, 0xA5 ^ 0x01 ^ 0x03 ^ ((7 << 4) | 0x02)])
+    client.ser.reset_input_buffer()
+    client.ser.write(cmd_start_ch7)
+    client.ser.flush()
+    time.sleep(0.05)  # Đợi DMA nạp xong 50% (16.384 mẫu @ 1MHz = 16.4ms) và vào WAIT_TRIGGER
+
+    # Gửi CMD_START lần 2 khi đang bận -> Phải nhận NAK ERR_BUSY (0xE3)
+    client.ser.write(cmd_start_ch7)
+    client.ser.flush()
+    resp_busy = client._read_exact(7, timeout_s=1.0)
+    assert len(resp_busy) == 7 and resp_busy[2] == 0xE3, f"Không nhận được ERR_BUSY (0xE3): {resp_busy.hex()}"
+    print("  [2.6] Gửi CMD_START khi đang bận chờ Trigger -> Trả mã NAK 0xE3 (ERR_BUSY): PASS")
+
+    # Gửi CMD_PING khi đang chờ Trigger -> Vẫn phải trả RSP_PONG (0x04) mà không làm đứt capture
+    ok_p_busy, ver_busy = client.ping()
+    assert ok_p_busy, f"PING khi đang WAIT_TRIGGER thất bại: {ver_busy}"
+    print(f"  [2.7] Gửi CMD_PING khi đang ở WAIT_TRIGGER -> Phản hồi PONG ({ver_busy}) tức thì: PASS")
+
+    # Gửi CMD_ABORT để hủy lượt chờ trên CH7 -> Trả RSP_ABORTED (0x05) và về IDLE
+    ok_ab_busy, _ = client.abort()
+    assert ok_ab_busy
+    print("  [2.8] Gửi CMD_ABORT thoát khỏi WAIT_TRIGGER về IDLE an toàn: PASS")
+
     # -------------------------------------------------------------------------
     # TEST 3: KIỂM THỬ CHẾ ĐỘ TRIGGER CẠNH XUỐNG (FALLING EDGE TRÊN CH0)
     # -------------------------------------------------------------------------
@@ -156,22 +192,45 @@ def run_full_hardware_test(port="/dev/ttyACM0"):
     print(f"  [5.2] Trạng thái phản hồi: STATUS_TIMEOUT (0x02), 32KB buffer rỗng nhận đủ 100%: PASS")
 
     # -------------------------------------------------------------------------
-    # TEST 6: KIỂM THỬ QUÉT TẦN SỐ LẤY MẪU (TIM1 ARR & PRESCALER SWEEP)
+    # TEST 6: KIỂM THỬ TOÀN BỘ 9 TẦN SỐ LẤY MẪU (RATE_IDX 0..8) & RISING EDGE
     # -------------------------------------------------------------------------
-    print("\n[PHẦN 6] KIỂM THỬ CÁC TẦN SỐ LẤY MẪU KHÁC NHAU (Bảng ARR TIM1)")
-    test_rates = [
-        (4, "500 kHz (ARR=167)"),
+    print("\n[PHẦN 6] KIỂM THỬ TOÀN BỘ 9 MỨC TẦN SỐ LẤY MẪU (RATE_IDX 0..8 - Bảng ARR TIM1)")
+    all_rates = [
+        (0, "6 MHz (ARR=13 - Cực đại)"),
+        (1, "3 MHz (ARR=27)"),
         (2, "2 MHz (ARR=41)"),
-        (0, "6 MHz (ARR=13 - TẦN SỐ CỰC ĐẠI THEO ĐẶC TẢ)"),
-        (6, "100 kHz (ARR=839)")
+        (3, "1 MHz (ARR=83)"),
+        (4, "500 kHz (ARR=167)"),
+        (5, "200 kHz (ARR=419)"),
+        (6, "100 kHz (ARR=839)"),
+        (7, "50 kHz (ARR=1679)"),
+        (8, "10 kHz (ARR=8399 - Thấp nhất)"),
     ]
 
-    for rate_idx, rate_label in test_rates:
-        print(f"  -> Kiểm tra tần số: {rate_label}...")
-        r = client.start_capture(rate_idx=rate_idx, trig_ch=0, trig_mode=2)
+    for rate_idx, rate_label in all_rates:
+        # Với 10 kHz..50 kHz dùng Free-run để test nhanh, với 100 kHz..6 MHz dùng Edge Trigger
+        trig_mode = 2 if rate_idx <= 6 else 0
+        r = client.start_capture(rate_idx=rate_idx, trig_ch=0, trig_mode=trig_mode)
         assert r["success"], f"Lỗi ở tần số {rate_label}: {r.get('error')}"
         assert r["checksum_ok"], f"Lỗi Checksum ở tần số {rate_label}!"
-        print(f"     [PASS] Tần số {rate_label}: Nhận đủ 32.768 mẫu, Checksum PASS, Trạng thái: {r['status_name']}")
+        assert len(r["payload"]) == 32768
+        print(f"  [6.{rate_idx + 1}] RATE_IDX={rate_idx} ({rate_label}): 32.768 mẫu, Checksum PASS, {r['status_name']}")
+
+    # Kiểm tra thêm Rising Edge Trigger (trig_mode = 1) trên CH0 ở 6 MHz
+    r_rising = client.start_capture(rate_idx=0, trig_ch=0, trig_mode=1)
+    assert r_rising["success"] and r_rising["status"] == 0 and r_rising["checksum_ok"]
+    ch0_6m = r_rising["channels"][0]
+    # Ở 6 MHz (166.7 ns/mẫu), do trễ NVIC Cortex-M4 + đồng bộ TIM2 ITR0, sườn lên thực tế nằm tại mẫu ~6544 (lệch -10 mẫu)
+    win_6m = ch0_6m[6538:6565]
+    rising_edges_near_trig = [6538 + i + 1 for i in range(len(win_6m) - 1) if win_6m[i] == 0 and win_6m[i + 1] == 1]
+    assert len(rising_edges_near_trig) >= 1, (
+        f"Rising Edge ở 6 MHz không tìm thấy sườn lên 0->1 quanh mẫu 6554: {win_6m}"
+    )
+    jitter_6m = rising_edges_near_trig[0] - 6554
+    dec_6m = UARTDecoder(sample_rate=6_000_000, baudrate=115200)
+    txt_6m, _ = dec_6m.decode(ch0_6m.tolist())
+    assert "TEST_LA_2026" in txt_6m, f"Giải mã UART ở 6 MHz thất bại: {txt_6m}"
+    print(f"  [6.10] Rising Edge Trigger (Mode=1) @ 6 MHz: Bắt sườn lên 0->1 tại mẫu {rising_edges_near_trig[0]} (Trễ NVIC+TIM2 = {jitter_6m:+d} mẫu = {abs(jitter_6m)*166.7:.0f} ns) & giải mã UART: PASS")
 
     # -------------------------------------------------------------------------
     # TEST 7: KIỂM THỬ CÁC TÍNH NĂNG THƯƠNG MẠI GIAI ĐOẠN 2 VỚI DỮ LIỆU THẬT
