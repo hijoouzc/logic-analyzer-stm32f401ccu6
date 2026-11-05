@@ -366,26 +366,26 @@ def test_4_gui_and_waveform_corner_cases():
     assert format_si_freq(float("inf")) == "-- Hz"
     assert "MHz" in format_si_freq(6_000_000.0)
 
-    # 4.2. Kiểm tra Hardware Sample Points (Loại A) chỉ hiện khi Zoom sâu (>= 6 px/sample)
-    # Khi Zoom toàn cảnh (32.768 mẫu): chấm phần cứng phải ẩn hoàn toàn
+    # 4.2. Kiểm tra đường sóng Digital luôn phẳng mượt (ẩn chấm mẫu trên đường H/L)
+    # và chỉ hiển thị 8 dấu chấm tâm bit giao thức (Protocol Bit Markers) ở giữa H và L khi Zoom vào
     win.waveform.zoom_fit()
     win.waveform._update_hardware_sample_points()
     assert all(not sp.isVisible() for sp in win.waveform.sample_points_items), (
-        "Lỗi: Hardware Sample Points không được hiển thị khi đang Zoom xa!"
+        "Lỗi: Không được vẽ chấm mẫu phần cứng trên đường sóng Digital!"
     )
 
-    # Khi Zoom cực sâu (chỉ nhìn 20 mẫu = 20 µs trên màn hình rộng ~800px -> ~40 px/sample): chấm phần cứng phải hiện
+    # Khi Zoom sâu vào khung truyền UART: đường sóng Digital vẫn phẳng mượt (sample_points_items ẩn),
+    # trong khi 8 dấu chấm giải mã tâm bit (bit_dots_item) ở giữa H và L hiển thị rõ nét
     win.waveform.plot_widget.resize(800, 500)
-    win.waveform.plot_widget.setXRange(0.0, 20e-6, padding=0)
+    win.waveform.plot_widget.setXRange(0.0, 200e-6, padding=0)
     win.waveform._update_hardware_sample_points()
-    assert win.waveform.sample_points_items[0].isVisible() is True, (
-        "Lỗi: Hardware Sample Points phải hiển thị khi Zoom sâu >= 6 px/sample!"
+    assert all(not sp.isVisible() for sp in win.waveform.sample_points_items), (
+        "Lỗi: Đường sóng Digital phải phẳng mượt không có chấm nằm đè lên đường H/L kể cả khi Zoom sâu!"
     )
-    x_pts, _ = win.waveform.sample_points_items[0].getData()
-    assert len(x_pts) >= 15 and abs((x_pts[1] - x_pts[0]) - 1e-6) < 1e-12, (
-        "Khoảng cách giữa 2 chấm mẫu phần cứng ở 1 MHz phải đúng bằng 1 µs!"
+    assert win.waveform.bit_dots_item is not None and win.waveform.bit_dots_item.isVisible() is True, (
+        "Lỗi: 8 dấu chấm tâm bit giao thức (Protocol Bit Markers) ở giữa H và L phải hiển thị khi Zoom gần!"
     )
-    print("  [4.1-4.2] Hardware Sample Points (Ẩn khi Zoom xa, Hiện chuẩn Δt = 1 µs khi Zoom sâu): PASS")
+    print("  [4.1-4.2] Sóng Digital phẳng mượt (0 chấm trên line H/L) & Protocol Bit Markers chuẩn: PASS")
 
     # 4.3. Kiểm tra 3 trạng thái Banner & Vạch Trigger: Triggered (0), Free-run (1), Timeout (2)
     for st_code in (0, 1, 2):

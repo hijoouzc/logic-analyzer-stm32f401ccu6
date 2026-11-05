@@ -111,7 +111,7 @@ CHANNEL_COLORS = [
 1. **Co giãn lấp đầy (Dynamic Stretching):** 8 kênh chia đều chiều cao của vùng sóng (mỗi kênh tối thiểu `48 px`), đảm bảo không có khoảng trống thừa bên dưới. Hàng có gắn Protocol Analyzer cao gấp `1.35x` hàng thông thường để chứa bong bóng giải mã.
 2. **Nét vẽ tín hiệu số:** Dùng `stepMode="right"` của pyqtgraph để vẽ xung vuông thẳng góc nét căng (độ dày 1.5px, màu theo kênh).
 3. **Mốc thời gian Trigger:** Mẫu trigger danh định tại index 6554 tương ứng thời gian $t = 0\,\text{s}$. Dữ liệu trước trigger có thời gian âm, sau trigger có thời gian dương.
-4. **Điểm mẫu phần cứng (Hardware Sample Points):** Tự động hiển thị chấm mẫu rời rạc khi người dùng Zoom sâu ($\ge 6\,\text{px/sample}$) và ẩn khi Zoom xa.
+4. **Điểm đánh dấu tâm bit giao thức (Protocol Bit Markers):** Đường sóng số (`D0`..`D7`) giữ nét vuông phẳng mượt 100% ở mọi mức phóng đại (không vẽ chấm mẫu trên đường `H`/`L`); chỉ hiển thị 8 dấu chấm đánh dấu tâm bit dữ liệu (`D0`..`D7`) nằm ở chính giữa hai mức `H` và `L` khi người dùng Zoom vào gói tin.
 
 ---
 

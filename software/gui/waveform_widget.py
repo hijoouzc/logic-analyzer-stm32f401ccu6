@@ -673,8 +673,9 @@ class WaveformWidget(QtWidgets.QWidget):
             self.vb.addItem(curve)
             self.curves.append(curve)
 
-        # 8 ScatterPlotItem hiển thị dấu chấm mẫu phần cứng (Hardware Sample Points - Loại A)
-        # Bật khi Zoom sâu (px_per_sample >= 6.0 px)
+        # Trên các kênh số (Digital Channels D0..D7), tắt hoàn toàn dấu chấm mẫu phần cứng trên đường sóng
+        # để đường xung vuông (H/L) luôn phẳng mượt 100%, chỉ hiển thị 8 dấu chấm tâm bit giao thức ở giữa xung.
+        self.show_hardware_sample_points: bool = False
         self.sample_points_items: List[pg.ScatterPlotItem] = []
         for ch in range(8):
             sp = pg.ScatterPlotItem(
@@ -683,7 +684,8 @@ class WaveformWidget(QtWidgets.QWidget):
                 brush=pg.mkBrush(T.CHANNEL_COLORS[ch]),
                 pxMode=True
             )
-            sp.setZValue(12)  # Nằm ngay trên đường sóng (zValue 10)
+            sp.setZValue(12)
+            sp.setVisible(False)
             self.vb.addItem(sp, ignoreBounds=True)
             self.sample_points_items.append(sp)
 
@@ -874,10 +876,10 @@ class WaveformWidget(QtWidgets.QWidget):
 
     def _update_hardware_sample_points(self):
         """
-        Hiển thị các dấu chấm mẫu rời rạc phần cứng (Hardware Sample Points - Loại A)
-        chỉ khi người dùng Zoom sâu (px_per_sample >= 6.0 px), tự động ẩn khi Zoom xa.
+        Cập nhật trạng thái hiển thị của 8 dấu chấm giải mã tâm bit (Protocol Bit Markers) theo mức Zoom.
+        Đường sóng số (Digital Channels D0..D7) luôn giữ phẳng mượt không vẽ chấm mẫu phần cứng trên đường H/L.
         """
-        if not self.current_data or not hasattr(self, "sample_points_items"):
+        if not self.current_data:
             return
 
         vr = self.vb.viewRange()
@@ -898,8 +900,8 @@ class WaveformWidget(QtWidgets.QWidget):
         if self.bit_dots_item:
             self.bit_dots_item.setVisible(px_per_sample * 8.0 >= 6.0)
 
-        # Ngưỡng kích hoạt: Khoảng cách giữa 2 mẫu liên tiếp trên màn hình phải >= 6 px
-        if px_per_sample < 6.0:
+        # Kênh Digital mặc định tắt dấu chấm trên đường line (show_hardware_sample_points = False)
+        if not getattr(self, "show_hardware_sample_points", False) or px_per_sample < 6.0:
             for sp in self.sample_points_items:
                 if sp.isVisible():
                     sp.clear()
