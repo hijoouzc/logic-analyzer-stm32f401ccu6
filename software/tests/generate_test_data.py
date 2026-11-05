@@ -32,13 +32,14 @@ def create_sample_bin(filename="software/tests/sample_data_1mhz.bin"):
         uart_bits.append(1)  # Stop bit (HIGH)
     
     # Ghi dạng sóng UART vào mảng payload bắt đầu từ TRIG_OFFSET (6554)
-    current_sample = TRIG_OFFSET
+    # Sử dụng bộ tích lũy pha thực (fractional phase accumulator) để không bị trôi Baudrate
+    exact_pos = float(TRIG_OFFSET)
     for bit in uart_bits:
-        bit_duration = int(round(SAMPLES_PER_BIT))
-        end_sample = min(current_sample + bit_duration, TOTAL_SAMPLES)
-        payload[current_sample:end_sample] = 0x01 if bit else 0x00
-        current_sample += bit_duration
-        if current_sample >= TOTAL_SAMPLES:
+        start_sample = int(round(exact_pos))
+        exact_pos += SAMPLES_PER_BIT
+        end_sample = min(int(round(exact_pos)), TOTAL_SAMPLES)
+        payload[start_sample:end_sample] = 0x01 if bit else 0x00
+        if end_sample >= TOTAL_SAMPLES:
             break
             
     # Tính XOR Checksum của 32.768 bytes payload

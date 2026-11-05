@@ -828,9 +828,11 @@ class WaveformWidget(QtWidgets.QWidget):
 
         self._update_hl_positions()
 
-        # Nếu đang có dữ liệu, vẽ lại dữ liệu với chiều cao track mới
+        # Nếu đang có dữ liệu, vẽ lại dữ liệu và cập nhật vị trí Y của bong bóng / dấu chấm bit theo chiều cao track mới
         if self.current_data:
             self._update_curve_data()
+            if self._uart_frames:
+                self._render_uart_bubbles()
 
     def _on_view_range_changed(self):
         """Khi vùng nhìn X thay đổi do Zoom hoặc Pan."""
@@ -1374,7 +1376,11 @@ class WaveformWidget(QtWidgets.QWidget):
             val = frame.get("byte_val", frame.get("val", 0))
             char = frame.get("char", "")
 
-            # Thời gian thực tế quy đổi theo trigger (t = 0 tại trigger)
+            # Dịch -0.5 mẫu để khớp tuyệt đối với cạnh dọc của stepMode="right" (vẽ tại idx - 1)
+            edge_idx = start_idx - 0.5
+            bit_len_idx = (stop_idx - start_idx) / 9.5
+
+            # Thời gian thực tế của bong bóng dữ liệu (bao phủ từ đầu Start bit đến hết 8 Data bits)
             t_start = (start_idx - trig_offset) / sample_rate
             t_stop = (stop_idx - trig_offset) / sample_rate
 
@@ -1406,29 +1412,22 @@ class WaveformWidget(QtWidgets.QWidget):
             self.vb.addItem(bubble)
             self.decode_items.append(bubble)
 
-            # Protocol Bit Markers (Loại B): Đánh dấu thời điểm lấy mẫu tâm bit (Mid-bit sampling)
-            bit_len_idx = (stop_idx - start_idx) / 10.0
-
-            # 1. Start bit marker (tại 50% độ rộng bit Start)
-            t_start_bit = (start_idx + 0.5 * bit_len_idx - trig_offset) / sample_rate
-            bit_dots_x.append(t_start_bit)
-            bit_dots_y.append(mid0)
-            bit_dots_brushes.append(QtGui.QBrush(ch_color))
-
-            # 2. 8 Data bit markers (tại 50% độ rộng từng bit dữ liệu)
+            # Protocol Bit Markers (Loại B): 8 dấu chấm đánh dấu tâm của 8 Data Bits (D0..D7)
+            # Căn chính giữa từng ô bit trên đồ thị stepMode="right" (edge_idx + (1.5 + bit_i) * bit_len_idx)
+            # và nằm ở trục tâm giữa H và L (mid0) chuẩn thiết kế công nghiệp
             for bit_i in range(8):
-                center_idx = start_idx + (bit_i + 1.5) * bit_len_idx
+                center_idx = edge_idx + (bit_i + 1.5) * bit_len_idx
                 t_center = (center_idx - trig_offset) / sample_rate
                 bit_dots_x.append(t_center)
                 bit_dots_y.append(mid0)
                 bit_dots_brushes.append(QtGui.QBrush(ch_color))
 
-            # 3. Stop bit marker (tại 50% độ rộng bit Stop)
-            t_stop_bit = (start_idx + 9.5 * bit_len_idx - trig_offset) / sample_rate
-            bit_dots_x.append(t_stop_bit)
-            bit_dots_y.append(mid0)
-            is_error = frame.get("error", False)
-            bit_dots_brushes.append(QtGui.QBrush(err_color if is_error else ch_color))
+            # Nếu có lỗi Framing Error ở Stop bit thì đánh dấu chấm đỏ tại tâm Stop bit
+            if frame.get("error", False):
+                t_stop_bit = (edge_idx + 9.5 * bit_len_idx - trig_offset) / sample_rate
+                bit_dots_x.append(t_stop_bit)
+                bit_dots_y.append(mid0)
+                bit_dots_brushes.append(QtGui.QBrush(err_color))
 
         if bit_dots_x:
             self.bit_dots_item = pg.ScatterPlotItem(

@@ -85,17 +85,19 @@ class UARTDecoder:
                     bit_samples = []
 
                     # Đọc 8 bit dữ liệu (LSB first)
+                    bit_positions = []
                     for bit_num in range(8):
-                        sample_pos = int(start_edge + samples_per_bit * (1.5 + bit_num))
+                        sample_pos = int(round(start_edge + samples_per_bit * (1.5 + bit_num)))
                         if sample_pos >= end_idx:
                             valid_byte = False
                             break
                         bit_val = samples[sample_pos]
                         bit_samples.append(bit_val)
+                        bit_positions.append(sample_pos)
                         byte_val |= (bit_val << bit_num)
 
                     # Kiểm tra Stop bit (phải ở mức HIGH = 1)
-                    stop_pos = int(start_edge + samples_per_bit * 9.5)
+                    stop_pos = int(round(start_edge + samples_per_bit * 9.5))
                     if valid_byte and stop_pos < end_idx and samples[stop_pos] == 1:
                         # Chuyển đổi mã byte sang ký tự ASCII
                         if 32 <= byte_val <= 126 or byte_val in (10, 13, 9):  # printable + \r, \n, \t
@@ -106,11 +108,16 @@ class UARTDecoder:
                         decoded_chars.append(char_ascii)
 
                         # Lưu thông tin frame phục vụ hiển thị trên đồ thị
+                        data_start_sample = int(round(start_edge + samples_per_bit * 1.0))
+                        data_end_sample = int(round(start_edge + samples_per_bit * 9.0))
                         frames.append({
                             "char": char_ascii,
                             "byte_val": byte_val,
                             "start_sample": start_edge,
                             "stop_sample": stop_pos,
+                            "data_start_sample": data_start_sample,
+                            "data_end_sample": data_end_sample,
+                            "bit_positions": bit_positions,
                             "start_time_s": start_edge / self.sample_rate,
                             "stop_time_s": stop_pos / self.sample_rate,
                             "bit_samples": bit_samples
