@@ -1380,9 +1380,12 @@ class WaveformWidget(QtWidgets.QWidget):
             edge_idx = start_idx - 0.5
             bit_len_idx = (stop_idx - start_idx) / 9.5
 
-            # Thời gian thực tế của bong bóng dữ liệu (bao phủ từ đầu Start bit đến hết 8 Data bits)
-            t_start = (start_idx - trig_offset) / sample_rate
-            t_stop = (stop_idx - trig_offset) / sample_rate
+            # Chuẩn công nghiệp: Bong bóng dữ liệu ôm đúng 8 Data Bits (1.0 * T_bit đến 9.0 * T_bit)
+            # sao cho mép trái bong bóng bắt đầu ngay sau Start bit và mép phải kết thúc ngay trước Stop bit
+            b_start_idx = frame.get("data_start_sample", edge_idx + 1.0 * bit_len_idx)
+            b_stop_idx = frame.get("data_end_sample", edge_idx + 9.0 * bit_len_idx)
+            t_start = (b_start_idx - trig_offset) / sample_rate
+            t_stop = (b_stop_idx - trig_offset) / sample_rate
 
             text_full = f"0x{val:02X}"
             if char and 32 <= ord(char[0]) <= 126:
@@ -1390,7 +1393,7 @@ class WaveformWidget(QtWidgets.QWidget):
             text_mid = f"0x{val:02X}"
             text_short = f"'{char}'" if (char and 32 <= ord(char[0]) <= 126) else f"{val:02X}"
 
-            tip_str = f"Byte: 0x{val:02X} ('{char}')\nStart: {format_si_time(t_start)}\nDuration: {format_si_time(t_stop - t_start)}"
+            tip_str = f"Byte: 0x{val:02X} ('{char}')\nStart: {format_si_time((start_idx - trig_offset) / sample_rate)}\nDuration: {format_si_time(t_stop - t_start)}"
 
             bubble = PillBubbleItem(
                 t_start=t_start,
@@ -1413,14 +1416,21 @@ class WaveformWidget(QtWidgets.QWidget):
             self.decode_items.append(bubble)
 
             # Protocol Bit Markers (Loại B): 8 dấu chấm đánh dấu tâm của 8 Data Bits (D0..D7)
-            # Căn chính giữa từng ô bit trên đồ thị stepMode="right" (edge_idx + (1.5 + bit_i) * bit_len_idx)
-            # và nằm ở trục tâm giữa H và L (mid0) chuẩn thiết kế công nghiệp
-            for bit_i in range(8):
-                center_idx = edge_idx + (bit_i + 1.5) * bit_len_idx
-                t_center = (center_idx - trig_offset) / sample_rate
-                bit_dots_x.append(t_center)
-                bit_dots_y.append(mid0)
-                bit_dots_brushes.append(QtGui.QBrush(ch_color))
+            # Lấy trực tiếp từ mảng bit_centers của UARTDecoder (hoặc tính từ edge_idx)
+            bit_centers = frame.get("bit_centers")
+            if bit_centers and len(bit_centers) == 8:
+                for center_idx in bit_centers:
+                    t_center = (center_idx - trig_offset) / sample_rate
+                    bit_dots_x.append(t_center)
+                    bit_dots_y.append(mid0)
+                    bit_dots_brushes.append(QtGui.QBrush(ch_color))
+            else:
+                for bit_i in range(8):
+                    center_idx = edge_idx + (bit_i + 1.5) * bit_len_idx
+                    t_center = (center_idx - trig_offset) / sample_rate
+                    bit_dots_x.append(t_center)
+                    bit_dots_y.append(mid0)
+                    bit_dots_brushes.append(QtGui.QBrush(ch_color))
 
             # Nếu có lỗi Framing Error ở Stop bit thì đánh dấu chấm đỏ tại tâm Stop bit
             if frame.get("error", False):

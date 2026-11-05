@@ -108,8 +108,10 @@ class UARTDecoder:
                         decoded_chars.append(char_ascii)
 
                         # Lưu thông tin frame phục vụ hiển thị trên đồ thị
-                        data_start_sample = int(round(start_edge + samples_per_bit * 1.0))
-                        data_end_sample = int(round(start_edge + samples_per_bit * 9.0))
+                        # Chuẩn công nghiệp: Bong bóng dữ liệu ôm đúng 8 Data Bits (1.0 * T_bit -> 9.0 * T_bit)
+                        data_start_sample = start_edge + samples_per_bit * 1.0 - 0.5
+                        data_end_sample = start_edge + samples_per_bit * 9.0 - 0.5
+                        bit_centers = [start_edge + (1.5 + b) * samples_per_bit - 0.5 for b in range(8)]
                         frames.append({
                             "char": char_ascii,
                             "byte_val": byte_val,
@@ -118,6 +120,7 @@ class UARTDecoder:
                             "data_start_sample": data_start_sample,
                             "data_end_sample": data_end_sample,
                             "bit_positions": bit_positions,
+                            "bit_centers": bit_centers,
                             "start_time_s": start_edge / self.sample_rate,
                             "stop_time_s": stop_pos / self.sample_rate,
                             "bit_samples": bit_samples

@@ -191,7 +191,7 @@ def test_phase2():
     win.waveform.plot_widget.setXRange(0.0, 0.002, padding=0)  # Zoom gần để dùng SingleBubble
     win.waveform._render_uart_bubbles()
     first_frame = win.current_uart_frames[0]
-    expected_freerun_t = first_frame["start_sample"] / float(freerun_data["sample_rate"])
+    expected_freerun_t = first_frame.get("data_start_sample", first_frame["start_sample"]) / float(freerun_data["sample_rate"])
     first_sb = win.waveform.decode_items[0]
     assert abs(first_sb.t_start - expected_freerun_t) < 1e-9, (
         f"Free-run bubble bị lệch trục thời gian: {first_sb.t_start} != {expected_freerun_t}"
