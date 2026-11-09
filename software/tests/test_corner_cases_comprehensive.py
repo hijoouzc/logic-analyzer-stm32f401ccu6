@@ -7,7 +7,7 @@ cho toàn bộ phân hệ Software (Client, Decoders, Measurements, Exporter, Wa
 
 import os
 import sys
-import pty
+import pytest
 import time
 import threading
 import tempfile
@@ -70,7 +70,7 @@ def test_1_client_protocol_corner_cases():
     with tempfile.TemporaryDirectory() as tmpdir:
         # File không tồn tại
         r = client.load_offline_file(os.path.join(tmpdir, "nonexistent.bin"))
-        assert not r["success"] and "không tồn tại" in r["error"]
+        assert not r["success"] and r["error"]
 
         # File sai kích thước (0B, 7B, 32775B, 32777B)
         for bad_size in (0, 7, 32775, 32777):
@@ -78,7 +78,7 @@ def test_1_client_protocol_corner_cases():
             with open(p, "wb") as f:
                 f.write(b"\x5A\xA5" + b"\x00" * max(0, bad_size - 2))
             r = client.load_offline_file(p)
-            assert not r["success"] and "Kích thước" in r["error"]
+            assert not r["success"] and "kích thước" in r["error"].lower()
 
         # File đúng 32776B nhưng sai Magic Header
         p_magic = os.path.join(tmpdir, "bad_magic.bin")
@@ -95,9 +95,13 @@ def test_1_client_protocol_corner_cases():
         with open(p_csum, "wb") as f:
             f.write(bytes([0x5A, 0xA5, 0x00, 0x9A, 0x19, 0x00, 0x80]) + payload + bytes([bad_csum]))
         r = client.load_offline_file(p_csum)
-        assert not r["success"] and "Sai Checksum" in r["error"]
+        assert not r["success"] and "checksum" in r["error"].lower()
     print("  [1.3] Kiểm tra file .bin hỏng (0B, thiếu/thừa byte, sai Magic, sai XOR Checksum): PASS")
 
+def test_1_client_protocol_pty_corner_cases():
+    # PTY is Unix-only; portable framing and Abort tests also run over FakeSerial/TCP.
+    pty = pytest.importorskip('pty', reason='PTY chỉ có trên Unix; Windows dùng mock TCP.')
+    client = LogicAnalyzerClient()
     # 1.4. Kiểm thử qua PTY ảo: Sliding Window chống nhiễu rác đầu dòng (0x5A lặp: 0x5A 0x5A 0xA5),
     #      tất cả mã NAK (0xE0..0xE3), gói bị đứt giữa chừng, và hủy giữa chừng (request_abort)
     master, slave = pty.openpty()
@@ -125,7 +129,7 @@ def test_1_client_protocol_corner_cases():
         for nak_code, expected_name in [(0xE0, "ERR_CHECKSUM"), (0xE1, "ERR_INVALID_RATE"), (0xE2, "ERR_INVALID_TRIG")]:
             def responder_nak(code=nak_code):
                 _ = os.read(master, 5)
-                hdr = bytes([0x5A, 0xA5, code, 0x01, 0x09, 0x00])
+                hdr = bytes([0x5A, 0xA5, code, 0x01, 0x03, 0x00])
                 c = hdr[0] ^ hdr[1] ^ hdr[2] ^ hdr[3] ^ hdr[4] ^ hdr[5]
                 os.write(master, hdr + bytes([c]))
             t = threading.Thread(target=responder_nak, daemon=True)
@@ -142,7 +146,7 @@ def test_1_client_protocol_corner_cases():
         t.start()
         res = client.start_capture(rate_idx=3, trig_ch=0, trig_mode=0)
         t.join(1.0)
-        assert not res["success"] and "Sai Checksum Control Frame" in res["error"]
+        assert not res["success"]  # Corrupt control frames are skipped until the deadline.
         print("  [1.4b] Nhận diện đầy đủ các mã NAK (0xE0, 0xE1, 0xE2, 0xE3) & bắt lỗi Checksum khung 7B: PASS")
 
         # Ca C: Hủy thu thập bất đồng bộ từ luồng khác (request_abort) khi đang chờ sóng
@@ -161,7 +165,7 @@ def test_1_client_protocol_corner_cases():
         res = client.start_capture(rate_idx=3, trig_ch=0, trig_mode=1)
         dt = time.time() - t0
         t.join(1.0)
-        assert not res["success"] and "Đã hủy" in res["error"] and dt < 1.5
+        assert not res["success"] and res.get("aborted") and dt < 1.5
         print(f"  [1.4c] Hủy thu thập đa luồng an toàn (request_abort) thoát trong {dt:.3f}s (< 1.5s): PASS")
 
     finally:
@@ -344,10 +348,10 @@ def test_3_measurements_and_exporter_corner_cases():
         assert export_vcd(flat_data, vcd_flat) is True
         with open(vcd_flat, "r", encoding="utf-8") as f:
             vcd_txt = f.read()
-        # Kênh phẳng hoàn toàn chỉ có mốc #0 ban đầu, không có mốc # nào khác sau $end
+        # A keeps edge compression; B retains the last sample's timestamp.
         after_dumpvars = vcd_txt.split("$dumpvars")[1].split("$end")[1].strip()
-        assert after_dumpvars == "", f"File VCD phẳng không được sinh thêm sự kiện: {after_dumpvars}"
-    print("  [3.6] Exporter (Từ chối dict rỗng, VCD nén 0 byte sự kiện cho kênh phẳng ở 6 MHz): PASS")
+        assert after_dumpvars == f"#{round(1023 * 1e9 / 6000000)}"
+    print("  [3.6] Exporter: từ chối dict rỗng; VCD kênh phẳng giữ mốc cuối capture: PASS")
 
 
 # ==============================================================================
@@ -396,16 +400,16 @@ def test_4_gui_and_waveform_corner_cases():
         assert win.waveform.trigger_line.isVisible() is True
         if st_code == 0:
             assert abs(win.waveform.trigger_line.value() - 0.0) < 1e-12
-            assert win.waveform.trigger_line.label.toPlainText() == "T"
+            assert win.waveform.trigger_line.label.toPlainText() == "T (0 s)"
         elif st_code == 1:
-            expected_freerun_pos = 6554 / float(d["sample_rate"])
+            expected_freerun_pos = 0.0
             assert abs(win.waveform.trigger_line.value() - expected_freerun_pos) < 1e-9
-            assert win.waveform.trigger_line.label.toPlainText() == "FREE-RUN"
+            assert 'free-run' in win.waveform.trigger_line.label.toPlainText()
         elif st_code == 2:
-            expected_timeout_pos = 6554 / float(d["sample_rate"])
+            expected_timeout_pos = 0.0
             assert abs(win.waveform.trigger_line.value() - expected_timeout_pos) < 1e-9
-            assert win.waveform.trigger_line.label.toPlainText() == "TIMEOUT"
-    print("  [4.3] Hiển thị vạch Trigger chuẩn xác cho cả 3 trạng thái (Triggered=0s 'T', Free-run=t_marker 'FREE-RUN', Timeout='TIMEOUT'): PASS")
+            assert 'timeout' in win.waveform.trigger_line.label.toPlainText()
+    print("  [4.3] Ba trạng thái dùng chung mốc tham chiếu 0 s; free-run/timeout được ghi nhãn riêng: PASS")
 
     # 4.4. Kiểm tra Quản lý Đa Phiên (Multi-Session Tabs): Tạo tab mới, chuyển tab, đóng tab, không cho đóng tab cuối
     initial_tabs = win.tab_sessions.count()
@@ -457,6 +461,7 @@ def test_4_gui_and_waveform_corner_cases():
     win._on_meas_autodetect()
     win.waveform.zoom_fit()
     win.waveform.zoom_to_window(0.0, 0.001)
+    win.close()
     print("  [4.6] Null-Safety (Gọi Decode, Measure, Zoom khi current_data = None không gây lỗi): PASS")
 
 

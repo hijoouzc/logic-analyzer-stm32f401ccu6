@@ -96,16 +96,21 @@ Embedded_System/
    cd software
    pip install -r requirements.txt
    ```
-2. Chạy thử nghiệm giả lập độc lập mà không cần kit thật:
-   * Terminal 1: Chạy script giả lập phát gói dữ liệu 32KB mẫu:
+2. Chạy giả lập không cần kit: `python app.py`, chọn **Offline Mock**, rồi **Start**. Dữ liệu mẫu là UART 115200 bps tại 1 MHz và luôn giữ metadata 1 MHz.
+3. Để kiểm tra cả đường giao tiếp serial qua TCP loopback:
+   * Terminal 1: Chạy thiết bị giả lập:
      ```bash
-     python tests/mock_serial.py
+     python tests/mock_serial.py --port 8765
      ```
    * Terminal 2: Chạy giao diện người dùng:
      ```bash
      python app.py
      ```
-   * Trên GUI bấm **Start**, đồ thị sẽ hiển thị dạng sóng UART và giải mã ra chuỗi `"TEST_LA_2026"`.
+   * Trên GUI bỏ chọn Offline Mock, nhập `socket://127.0.0.1:8765` vào ô cổng, rồi Ping/Start. Dữ liệu UART giải mã thành `"TEST_LA_2026\r\n"` tại 1 MHz.
+4. **File → Save Capture** (`Ctrl+S`) lưu `.lacapture` kèm tần số và cấu hình. File `.bin` không chứa tần số; phải chọn đúng tốc độ khi mở. Xuất ảnh dùng `Ctrl+Shift+S`.
+5. Cài dependencies kiểm thử trong môi trường riêng bằng `python -m pip install -r requirements-dev.txt`, rồi chạy `python -m pytest tests -q`. Kiểm tra không cần dependencies: `python tests/verify_integration_stdlib.py`.
+
+Chi tiết hợp nhất hai nhánh, xử lý conflict, kết quả và các phần chưa kiểm chứng: [Báo cáo tích hợp](software/INTEGRATION_REPORT.md). Các kết quả kiểm thử lịch sử không thay thế kiểm thử bản tích hợp hoặc phần cứng thật.
 
 ---
 

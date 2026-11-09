@@ -16,6 +16,7 @@ Bộ giải mã giao thức UART (Universal Asynchronous Receiver-Transmitter).
 """
 
 from typing import List, Dict, Any, Tuple, Optional
+import math
 
 
 class UARTDecoder:
@@ -55,7 +56,7 @@ class UARTDecoder:
                        'bit_samples': List[int]
                    }
         """
-        if not samples or self.baudrate <= 0 or self.sample_rate <= 0:
+        if len(samples) == 0 or self.baudrate <= 0 or not math.isfinite(self.sample_rate) or self.sample_rate <= 0:
             return "", []
 
         total_len = len(samples)
@@ -70,8 +71,8 @@ class UARTDecoder:
         decoded_chars: List[str] = []
         frames: List[Dict[str, Any]] = []
 
-        idx = start_idx
-        max_idx = end_idx - int(samples_per_bit * 10)  # Cần đủ tối thiểu 10 bit cho 1 frame
+        idx = max(0, start_idx - 1)  # Include the falling edge exactly at start_idx.
+        max_idx = end_idx - 1
 
         while idx < max_idx:
             # Tìm cạnh xuống từ HIGH (1) về LOW (0) - Start bit
@@ -116,13 +117,13 @@ class UARTDecoder:
                             "char": char_ascii,
                             "byte_val": byte_val,
                             "start_sample": start_edge,
-                            "stop_sample": stop_pos,
+                            "stop_sample": min(end_idx, int(round(start_edge + samples_per_bit * 10))),
                             "data_start_sample": data_start_sample,
                             "data_end_sample": data_end_sample,
                             "bit_positions": bit_positions,
                             "bit_centers": bit_centers,
                             "start_time_s": start_edge / self.sample_rate,
-                            "stop_time_s": stop_pos / self.sample_rate,
+                            "stop_time_s": min(end_idx, int(round(start_edge + samples_per_bit * 10))) / self.sample_rate,
                             "bit_samples": bit_samples
                         })
 

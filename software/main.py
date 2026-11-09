@@ -25,9 +25,11 @@ if project_root not in sys.path:
 from PyQt5 import QtCore, QtGui, QtWidgets
 from software.gui import theme as T
 from software.gui.main_window import MainWindow
+from software.qt_bootstrap import configure_qt_plugins
 
 
 def main():
+    configure_qt_plugins()
     # 1. Bật tính năng co giãn giao diện cho màn hình High-DPI (Retina, 2K, 4K)
     if hasattr(QtCore.Qt, "AA_EnableHighDpiScaling"):
         QtWidgets.QApplication.setAttribute(QtCore.Qt.AA_EnableHighDpiScaling, True)

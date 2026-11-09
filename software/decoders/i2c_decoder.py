@@ -6,6 +6,7 @@ Hỗ trợ: START / Repeated-START, 7-bit Address, R/W bit, ACK/NACK, Data Bytes
 """
 
 from typing import List, Dict, Any, Tuple, Optional
+import math
 
 
 class I2CDecoder:
@@ -30,7 +31,7 @@ class I2CDecoder:
         :param end_idx: Mẫu kết thúc giải mã (mặc định: hết mảng)
         :return: (Chuỗi văn bản tổng hợp, Danh sách chi tiết các frame)
         """
-        if not scl_samples or not sda_samples or len(scl_samples) != len(sda_samples):
+        if len(scl_samples) == 0 or len(sda_samples) == 0 or len(scl_samples) != len(sda_samples) or not math.isfinite(self.sample_rate) or self.sample_rate <= 0:
             return "", []
 
         total_len = len(scl_samples)
@@ -47,7 +48,7 @@ class I2CDecoder:
 
         current_line_parts: List[str] = []
 
-        i = start_idx
+        i = max(0, start_idx)
         while i < end_idx - 1:
             scl_now, scl_next = scl_samples[i], scl_samples[i + 1]
             sda_now, sda_next = sda_samples[i], sda_samples[i + 1]

@@ -30,9 +30,11 @@ from software.decoders.spi_decoder import SPIDecoder
 from software.gui.waveform_widget import format_si_time as format_time, format_si_freq as format_freq
 from software.utils.exporter import export_image, export_csv, export_vcd
 from software.gui.main_window import MainWindow
+from software.qt_bootstrap import configure_qt_plugins
 
 
 def test_phase2():
+    configure_qt_plugins()
     print("==================================================")
     print("BẮT ĐẦU KIỂM THỬ TỰ ĐỘNG GIAI ĐOẠN 2 (CHUẨN THƯƠNG MẠI)")
     print("==================================================")
@@ -191,16 +193,17 @@ def test_phase2():
     win.waveform.plot_widget.setXRange(0.0, 0.002, padding=0)  # Zoom gần để dùng SingleBubble
     win.waveform._render_uart_bubbles()
     first_frame = win.current_uart_frames[0]
-    expected_freerun_t = first_frame.get("data_start_sample", first_frame["start_sample"]) / float(freerun_data["sample_rate"])
+    expected_freerun_t = (first_frame.get("data_start_sample", first_frame["start_sample"]) - 6554) / float(freerun_data["sample_rate"])
     first_sb = win.waveform.decode_items[0]
     assert abs(first_sb.t_start - expected_freerun_t) < 1e-9, (
         f"Free-run bubble bị lệch trục thời gian: {first_sb.t_start} != {expected_freerun_t}"
     )
+    win.close()
     print("-> [PASS] Free-run Time Alignment, MultiBubble Click Zoom và I2C START/STOP chuẩn xác 100%!")
 
     print("\n==================================================")
     print("  [SUCCESS] 100% CÁC BÀI KIỂM THỬ GIAI ĐOẠN 2 ĐẠT PASS!")
-    print("  Phần mềm Desktop đã đạt chuẩn thương mại công nghiệp!")
+    print("  Kiểm thử phần mềm/offline đạt; chưa kiểm chứng phần cứng thật trong lượt chạy này.")
     print("==================================================")
 
 

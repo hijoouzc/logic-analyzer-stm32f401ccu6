@@ -69,6 +69,7 @@ LABEL_COLUMN_WIDTH = 180     # Cột nhãn kênh bên trái
 RIGHT_PANEL_WIDTH = 310      # Drawer panel Analyzers / Data Table
 RAIL_WIDTH = 56              # Dải Activity Rail bên phải
 AXIS_HEIGHT = 32             # Thước thời gian Timeline
+HUD_HEIGHT = 32              # Dành một hàng riêng để HUD không che dạng sóng
 BOTTOM_BAR_HEIGHT = 36       # Thanh tab Session + mức zoom
 START_BUTTON_DIAMETER = 48   # Nút Start tròn
 FONT_FAMILY = "Roboto"       # Phông chữ chuẩn giao diện

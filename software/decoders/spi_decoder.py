@@ -6,6 +6,7 @@ Hỗ trợ truyền nhận song công đồng thời (Full-Duplex: MOSI & MISO) 
 """
 
 from typing import List, Dict, Any, Tuple, Optional
+import math
 
 
 class SPIDecoder:
@@ -45,15 +46,17 @@ class SPIDecoder:
         :param end_idx: Mẫu kết thúc giải mã
         :return: (Chuỗi văn bản tổng hợp, Danh sách chi tiết các frame)
         """
-        if not sck_samples:
+        if len(sck_samples) == 0 or not math.isfinite(self.sample_rate) or self.sample_rate <= 0:
             return "", []
+        if self.cpol not in (0, 1) or self.cpha not in (0, 1) or self.bit_order not in ('MSB', 'LSB') or self.cs_active not in ('LOW', 'HIGH'):
+            raise ValueError('Invalid SPI mode, bit order or CS polarity')
 
         total_len = len(sck_samples)
-        if mosi_samples:
+        if mosi_samples is not None:
             total_len = min(total_len, len(mosi_samples))
-        if miso_samples:
+        if miso_samples is not None:
             total_len = min(total_len, len(miso_samples))
-        if cs_samples:
+        if cs_samples is not None:
             total_len = min(total_len, len(cs_samples))
 
         if end_idx is None or end_idx > total_len:
@@ -74,11 +77,11 @@ class SPIDecoder:
         curr_miso_bits: List[int] = []
         byte_start_sample = 0
 
-        i = start_idx
+        i = max(0, start_idx)
         while i < end_idx - 1:
             # 1. Kiểm tra trạng thái CS nếu có kênh CS
             if cs_samples is not None and i < len(cs_samples):
-                cs_val = cs_samples[i]
+                cs_val = cs_samples[i + 1]
                 is_active = (cs_val == 0) if self.cs_active == "LOW" else (cs_val == 1)
                 if not is_active:
                     # CS không tích cực -> Reset bộ gom bit
@@ -103,11 +106,11 @@ class SPIDecoder:
                     byte_start_sample = sample_pos
 
                 # Đọc bit MOSI
-                mosi_bit = mosi_samples[sample_pos] if (mosi_samples and sample_pos < len(mosi_samples)) else 0
+                mosi_bit = int(mosi_samples[sample_pos]) if mosi_samples is not None else 0
                 curr_mosi_bits.append(mosi_bit)
 
                 # Đọc bit MISO
-                miso_bit = miso_samples[sample_pos] if (miso_samples and sample_pos < len(miso_samples)) else 0
+                miso_bit = int(miso_samples[sample_pos]) if miso_samples is not None else 0
                 curr_miso_bits.append(miso_bit)
 
                 # Khi đủ 8 bits = 1 Byte

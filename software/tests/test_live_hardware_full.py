@@ -23,6 +23,9 @@ import sys
 import time
 import serial
 import numpy as np
+import argparse
+import tempfile
+from pathlib import Path
 
 # Thiết lập đường dẫn import
 project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -35,7 +38,7 @@ from software.gui.waveform_widget import format_si_time as format_time, format_s
 from software.utils.exporter import export_csv, export_vcd
 
 
-def run_full_hardware_test(port="/dev/ttyACM0"):
+def run_full_hardware_test(port="/dev/ttyACM0", output_dir=None):
     print("=" * 70)
     print(" BẮT ĐẦU KIỂM THỬ TOÀN DIỆN PHẦN CỨNG THẬT (FULL HARDWARE-IN-THE-LOOP)")
     print(f" Thiết bị: STM32F401CCU6 WeAct Black Pill V3.0 | Cổng: {port}")
@@ -247,14 +250,16 @@ def run_full_hardware_test(port="/dev/ttyACM0"):
         print(f"  [7.1] Thước đo Cursor đo ký tự '{f0['char']}': Độ rộng = {format_time(dt)}, Tốc độ Baud ước tính = {baud_meas:,.0f} bps (Chuẩn: 115.200 bps)")
 
     # 7.2 Xuất CSV
-    csv_path = "/tmp/la_live_capture.csv"
+    output_dir = Path(output_dir) if output_dir else Path(tempfile.gettempdir()) / 'logic-analyzer-hil'
+    output_dir.mkdir(parents=True, exist_ok=True)
+    csv_path = str(output_dir / 'la_live_capture.csv')
     ok_csv = export_csv(res, csv_path)
     assert ok_csv and os.path.exists(csv_path), "Lỗi xuất CSV"
     csv_size = os.path.getsize(csv_path)
     print(f"  [7.2] Xuất dữ liệu thật ra CSV: {csv_path} ({csv_size:,} bytes, đủ 32.768 dòng): PASS")
 
     # 7.3 Xuất VCD (GTKWave)
-    vcd_path = "/tmp/la_live_capture.vcd"
+    vcd_path = str(output_dir / 'la_live_capture.vcd')
     ok_vcd = export_vcd(res, vcd_path)
     assert ok_vcd and os.path.exists(vcd_path), "Lỗi xuất VCD"
     vcd_size = os.path.getsize(vcd_path)
@@ -270,5 +275,9 @@ def run_full_hardware_test(port="/dev/ttyACM0"):
 
 
 if __name__ == "__main__":
-    success = run_full_hardware_test()
+    parser = argparse.ArgumentParser(description='Manual hardware test. Requires STM32 and PA9 -> PA0 jumper.')
+    parser.add_argument('--port', required=True, help='Real device port, for example COM3 or /dev/ttyACM0')
+    parser.add_argument('--output-dir', help='Directory for exported CSV/VCD (defaults to OS temporary directory)')
+    args = parser.parse_args()
+    success = run_full_hardware_test(args.port, args.output_dir)
     sys.exit(0 if success else 1)
