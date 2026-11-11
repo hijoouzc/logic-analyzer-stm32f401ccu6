@@ -173,6 +173,11 @@ class MainWindow(QtWidgets.QMainWindow):
         self._next_session_id: int = 1
         self.drawer_open: bool = True
 
+        # Chế độ Capture: Single Shot vs Auto-Repeat Run
+        self.repeat_mode: bool = False
+        self.repeat_running: bool = False
+        self.repeat_frame_count: int = 0
+
         # Các widget điều khiển kênh hỗ trợ tương thích ngược
         self.ch_edits: List[QtWidgets.QLineEdit] = []
         self.ch_checks: List[QtWidgets.QCheckBox] = []
@@ -189,6 +194,7 @@ class MainWindow(QtWidgets.QMainWindow):
         # Khởi tạo giao diện
         self._init_layout()
         self._init_menu_bar()
+        self._update_capture_mode_ui()
         # Kết nối tín hiệu khung nhìn để cập nhật chỉ số Zoom trên thanh Footer
         self.waveform.sigXRangeChanged.connect(self._on_x_range_changed)
         # Kết nối tín hiệu điều hướng 2 chiều: Ctrl+Click vào bubble trên sóng -> cuộn bảng Data Table
@@ -284,11 +290,17 @@ class MainWindow(QtWidgets.QMainWindow):
 
         # Capture
         menu_capture = menubar.addMenu("&Capture")
-        act_start = QtWidgets.QAction("&Start Capture", self)
+        act_start = QtWidgets.QAction("&Start / Pause Capture", self)
         act_start.setShortcut("F5")
-        act_start.setStatusTip("Trigger STM32 logic capture or run offline mock")
-        act_start.triggered.connect(self._on_start_capture)
+        act_start.setStatusTip("Trigger capture or pause/resume continuous repeat")
+        act_start.triggered.connect(self._on_start_or_abort)
         menu_capture.addAction(act_start)
+
+        act_toggle_mode = QtWidgets.QAction("Toggle &Single / Repeat Mode", self)
+        act_toggle_mode.setShortcut("F6")
+        act_toggle_mode.setStatusTip("Switch between Single Shot [1x] and Auto-Repeat Continuous Run [🔁]")
+        act_toggle_mode.triggered.connect(self._toggle_capture_mode)
+        menu_capture.addAction(act_toggle_mode)
 
         act_abort = QtWidgets.QAction("&Abort Capture", self)
         act_abort.setShortcut("Escape")
@@ -602,6 +614,18 @@ class MainWindow(QtWidgets.QMainWindow):
         h_trig.addWidget(self.combo_mode)
         trig_layout.addLayout(h_trig)
 
+        # Chế độ lấy mẫu (Single Shot / Auto-Repeat Run)
+        h_cap_mode = QtWidgets.QHBoxLayout()
+        lbl_cap_mode = QtWidgets.QLabel("Mode:")
+        lbl_cap_mode.setStyleSheet(f"color: {T.TEXT_DIM};")
+        self.combo_capture_mode = QtWidgets.QComboBox()
+        self.combo_capture_mode.addItem("Single Shot (1x)", "single")
+        self.combo_capture_mode.addItem("Auto-Repeat (Run) 🔁", "repeat")
+        self.combo_capture_mode.currentIndexChanged.connect(self._on_capture_combo_changed)
+        h_cap_mode.addWidget(lbl_cap_mode)
+        h_cap_mode.addWidget(self.combo_capture_mode, 1)
+        trig_layout.addLayout(h_cap_mode)
+
         # Checkbox Offline Mock
         self.chk_mock = QtWidgets.QCheckBox("Offline Mock (Sample File)")
         self.chk_mock.setToolTip("Load sample_data_1mhz.bin without physical STM32 hardware")
@@ -879,6 +903,15 @@ class MainWindow(QtWidgets.QMainWindow):
         self.btn_rail_start.clicked.connect(self._on_start_or_abort)
         v_layout.addWidget(self.btn_rail_start, 0, QtCore.Qt.AlignHCenter)
 
+        # Nút chuyển đổi nhanh Single Shot / Auto-Repeat 🔁
+        self.btn_rail_mode = QtWidgets.QPushButton("1x")
+        self.btn_rail_mode.setObjectName("railModeButton")
+        self.btn_rail_mode.setToolTip("Capture Mode: Single Shot [1x] / Auto-Repeat [🔁] (F6)")
+        self.btn_rail_mode.setFixedSize(36, 18)
+        self.btn_rail_mode.setCursor(QtCore.Qt.PointingHandCursor)
+        self.btn_rail_mode.clicked.connect(self._toggle_capture_mode)
+        v_layout.addWidget(self.btn_rail_mode, 0, QtCore.Qt.AlignHCenter)
+
         v_layout.addSpacing(6)
 
         # Các nút switcher bọc trong RailSwitcherSlot (56x56px, vạch 2px #ffffff)
@@ -1065,17 +1098,128 @@ class MainWindow(QtWidgets.QMainWindow):
         self.btn_pane_terminal.setStyleSheet(active_style if curr == 1 else inactive_style)
 
     def _on_start_or_abort(self):
-        """Bấm nút tròn tại đỉnh Activity Rail: Start khi rảnh, Abort khi đang bắt tín hiệu."""
+        """Bấm nút tròn tại đỉnh Activity Rail: Start khi rảnh, Pause/Abort khi đang bắt tín hiệu."""
+        if self.repeat_running:
+            self._stop_repeat()
+        elif self.worker is not None and self.worker.isRunning():
+            self._on_abort()
+        else:
+            if self.repeat_mode:
+                self._start_repeat()
+            else:
+                self._on_start_capture()
+
+    def _toggle_capture_mode(self):
+        """Chuyển đổi giữa chế độ Single Shot [1x] và Auto-Repeat Run [🔁]."""
+        self.repeat_mode = not self.repeat_mode
+        if not self.repeat_mode and self.repeat_running:
+            self._stop_repeat()
+        self._update_capture_mode_ui()
+
+    def _on_capture_combo_changed(self, index: int):
+        """Đồng bộ khi người dùng chọn chế độ từ combobox trong Device Settings."""
+        data = self.combo_capture_mode.currentData()
+        self.repeat_mode = (data == "repeat")
+        if not self.repeat_mode and self.repeat_running:
+            self._stop_repeat()
+        self._update_capture_mode_ui()
+
+    def _update_capture_mode_ui(self):
+        """Cập nhật trạng thái hiển thị của các nút chế độ Capture."""
+        is_repeat = getattr(self, "repeat_mode", False)
+        if hasattr(self, "combo_capture_mode"):
+            self.combo_capture_mode.blockSignals(True)
+            self.combo_capture_mode.setCurrentIndex(1 if is_repeat else 0)
+            self.combo_capture_mode.blockSignals(False)
+
+        if hasattr(self, "btn_rail_mode"):
+            if is_repeat:
+                self.btn_rail_mode.setText("🔁")
+                self.btn_rail_mode.setToolTip("Capture Mode: Auto-Repeat Run (Click to switch to Single Shot 1x) [F6]")
+                self.btn_rail_mode.setStyleSheet("""
+                    QPushButton#railModeButton {
+                        background-color: #1b4d2e;
+                        border: 1px solid #00994d;
+                        border-radius: 9px;
+                        color: #58c667;
+                        font-size: 11px;
+                        font-weight: bold;
+                        padding: 0px;
+                    }
+                    QPushButton#railModeButton:hover {
+                        background-color: #24633b;
+                    }
+                """)
+            else:
+                self.btn_rail_mode.setText("1x")
+                self.btn_rail_mode.setToolTip("Capture Mode: Single Shot (Click to switch to Auto-Repeat 🔁) [F6]")
+                self.btn_rail_mode.setStyleSheet("""
+                    QPushButton#railModeButton {
+                        background-color: #2c2c2e;
+                        border: 1px solid #57575e;
+                        border-radius: 9px;
+                        color: #a0a0a6;
+                        font-size: 11px;
+                        font-weight: bold;
+                        padding: 0px;
+                    }
+                    QPushButton#railModeButton:hover {
+                        background-color: #3a3a3e;
+                        color: #ffffff;
+                    }
+                """)
+
+        if not getattr(self, "repeat_running", False) and (self.worker is None or not self.worker.isRunning()):
+            self._set_capture_button_state(False)
+
+    def _start_repeat(self):
+        """Bắt đầu chu trình Auto-Repeat lấy mẫu liên tục."""
+        self.repeat_running = True
+        self.repeat_frame_count = 0
+        self._set_capture_button_state(True)
+        self.lbl_status.setText("⚡ Auto-Repeat: Starting continuous acquisition...")
+        self._on_start_capture()
+
+    def _stop_repeat(self):
+        """Dừng chu trình Auto-Repeat và đóng băng khung hình hiện tại."""
+        self.repeat_running = False
         if self.worker is not None and self.worker.isRunning():
             self._on_abort()
         else:
-            self._on_start_capture()
+            self.client.disconnect()
+            self._set_capture_button_state(False)
+            self.lbl_status.setText(f"⏸ Auto-Repeat Paused: Frame #{self.repeat_frame_count} frozen for analysis")
+
+    def _on_repeat_cycle_ready(self):
+        """Kích hoạt chu kỳ tiếp theo trong vòng lặp Auto-Repeat."""
+        if not getattr(self, "repeat_running", False):
+            return
+        if self.worker is not None and self.worker.isRunning():
+            self.worker.wait(200)
+            if self.worker.isRunning():
+                QtCore.QTimer.singleShot(25, self._on_repeat_cycle_ready)
+                return
+        self._on_start_capture()
+
+    def keyPressEvent(self, event):
+        """Xử lý phím tắt Space (Play/Pause) và F6 (Toggle Single/Repeat)."""
+        if event.key() == QtCore.Qt.Key_Space:
+            self._on_start_or_abort()
+            return
+        elif event.key() == QtCore.Qt.Key_F6:
+            self._toggle_capture_mode()
+            return
+        super().keyPressEvent(event)
 
     def _set_capture_button_state(self, capturing: bool):
-        """Cập nhật nút Start tròn: Xanh Play khi rảnh, Đỏ Stop khi đang capture."""
+        """Cập nhật nút Start tròn: Xanh Play khi rảnh, Đỏ Stop / Cam Pause khi đang capture."""
         if capturing:
-            self.btn_rail_start.setText("⏹")
-            self.btn_rail_start.setToolTip("Stop Capture (Escape)")
+            if getattr(self, "repeat_running", False):
+                self.btn_rail_start.setText("⏸")
+                self.btn_rail_start.setToolTip("Pause Auto-Repeat (Space / Escape / F5)")
+            else:
+                self.btn_rail_start.setText("⏹")
+                self.btn_rail_start.setToolTip("Stop Capture (Escape)")
             self.btn_rail_start.setStyleSheet(f"""
                 QPushButton#startButton {{
                     background-color: {T.ACCENT_STOP};
@@ -1095,7 +1239,10 @@ class MainWindow(QtWidgets.QMainWindow):
             """)
         else:
             self.btn_rail_start.setText("▶")
-            self.btn_rail_start.setToolTip("Start Capture (F5)")
+            if getattr(self, "repeat_mode", False):
+                self.btn_rail_start.setToolTip("Start Auto-Repeat Run (F5 / Space)")
+            else:
+                self.btn_rail_start.setToolTip("Start Capture (F5 / Space)")
             self.btn_rail_start.setStyleSheet(f"""
                 QPushButton#startButton {{
                     background-color: {T.ACCENT_START};
@@ -1409,11 +1556,23 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def closeEvent(self, event):
         """Dọn dẹp timer và worker khi đóng ứng dụng."""
+        self.repeat_running = False
         if hasattr(self, "timer_hotplug") and self.timer_hotplug.isActive():
             self.timer_hotplug.stop()
         if self.worker is not None and self.worker.isRunning():
-            self.worker.terminate()
-            self.worker.wait(500)
+            self.worker.is_aborted = True
+            try:
+                self.client.abort()
+            except Exception:
+                pass
+            self.worker.wait(1000)
+            if self.worker.isRunning():
+                self.worker.terminate()
+                self.worker.wait(500)
+        if hasattr(self, "_old_workers"):
+            for w in self._old_workers:
+                if w.isRunning():
+                    w.wait(500)
         event.accept()
 
     def _on_start_capture(self):
@@ -1430,15 +1589,24 @@ class MainWindow(QtWidgets.QMainWindow):
         rate_name = self.combo_rate.currentText().split()[0]
 
         if use_mock or port == "OFFLINE_MOCK":
-            self.lbl_status.setText("Reading offline mock data (sample_data_1mhz.bin)...")
             self.client.connect("OFFLINE_MOCK")
             res = self.client.start_capture(rate_idx=rate_idx, trig_ch=trig_ch, trig_mode=trig_mode)
             self.client.disconnect()
             self._render_capture_data(res)
+            if getattr(self, "repeat_running", False):
+                self.repeat_frame_count += 1
+                self.lbl_status.setText(f"⚡ Auto-Repeat (Mock): Frame #{self.repeat_frame_count} | Press Pause (⏸) to freeze")
+                QtCore.QTimer.singleShot(40, self._on_repeat_cycle_ready)
+            else:
+                self.lbl_status.setText("Reading offline mock data (sample_data_1mhz.bin)...")
             return
 
         if not port or "Không" in str(port) or "No" in str(port):
             # Tự động chuyển sang Mock nếu chưa cắm kit
+            if getattr(self, "repeat_running", False):
+                self.chk_mock.setChecked(True)
+                self._on_start_capture()
+                return
             reply = QtWidgets.QMessageBox.question(
                 self, "Hardware Not Detected",
                 "No STM32 USB-CDC hardware found. Would you like to run in Offline Mock mode?",
@@ -1449,17 +1617,37 @@ class MainWindow(QtWidgets.QMainWindow):
                 self._on_start_capture()
             return
 
-        ok, msg = self.client.connect(port)
-        if not ok:
-            QtWidgets.QMessageBox.critical(self, "Connection Error", f"Cannot open port {port}:\n{msg}")
-            return
+        if not self.client.is_connected:
+            ok, msg = self.client.connect(port)
+            if not ok:
+                if getattr(self, "repeat_running", False):
+                    self.repeat_running = False
+                    self._set_capture_button_state(False)
+                    self.lbl_status.setText(f"⚠️ Auto-Repeat Connection Error: {msg}")
+                else:
+                    QtWidgets.QMessageBox.critical(self, "Connection Error", f"Cannot open port {port}:\n{msg}")
+                return
 
         self._set_capture_button_state(True)
         self.btn_rail_start.setEnabled(True)
-        if trig_mode == 0:
-            self.lbl_status.setText(f"⚡ Capturing: Free-run sampling @ {rate_name} on {port}...")
+        if getattr(self, "repeat_running", False):
+            self.lbl_status.setText(f"⚡ Auto-Repeat [Frame #{self.repeat_frame_count + 1}]: Waiting for trigger on CH{trig_ch} ({mode_str}) @ {rate_name}...")
         else:
-            self.lbl_status.setText(f"⚡ Capturing: Waiting for trigger on CH{trig_ch} ({mode_str}) @ {rate_name}...")
+            if trig_mode == 0:
+                self.lbl_status.setText(f"⚡ Capturing: Free-run sampling @ {rate_name} on {port}...")
+            else:
+                self.lbl_status.setText(f"⚡ Capturing: Waiting for trigger on CH{trig_ch} ({mode_str}) @ {rate_name}...")
+
+        # Dọn dẹp an toàn các worker cũ tránh Qt crash do garbage collection sớm
+        if hasattr(self, "_old_workers"):
+            self._old_workers = [w for w in self._old_workers if w.isRunning()]
+        else:
+            self._old_workers = []
+
+        if self.worker is not None:
+            if self.worker.isRunning():
+                self.worker.wait(500)
+            self._old_workers.append(self.worker)
 
         self.worker = CaptureWorker(self.client, rate_idx, trig_ch, trig_mode)
         self.worker.capture_done.connect(self._on_capture_done)
@@ -1467,20 +1655,35 @@ class MainWindow(QtWidgets.QMainWindow):
         self.worker.start()
 
     def _on_capture_done(self, res: dict):
-        self._set_capture_button_state(False)
-        self.btn_rail_start.setEnabled(True)
-        self.client.disconnect()
         self._render_capture_data(res)
+        if getattr(self, "repeat_running", False):
+            self.repeat_frame_count += 1
+            rate_name = self.combo_rate.currentText().split()[0]
+            status_name = res.get("status_name", "Triggered")
+            self.lbl_status.setText(f"⚡ Auto-Repeat: Frame #{self.repeat_frame_count} ({status_name} @ {rate_name}) | Press Pause (⏸) to freeze")
+            QtCore.QTimer.singleShot(25, self._on_repeat_cycle_ready)
+        else:
+            self.client.disconnect()
+            self._set_capture_button_state(False)
+            self.btn_rail_start.setEnabled(True)
 
     def _on_capture_error(self, err_msg: str):
-        self._set_capture_button_state(False)
-        self.btn_rail_start.setEnabled(True)
         self.client.disconnect()
-        self.lbl_status.setText(f"Capture error: {err_msg}")
-        QtWidgets.QMessageBox.critical(self, "Capture Error", err_msg)
+        if getattr(self, "repeat_running", False):
+            self.repeat_running = False
+            self._set_capture_button_state(False)
+            self.btn_rail_start.setEnabled(True)
+            self.lbl_status.setText(f"⚠️ Auto-Repeat Paused on Error: {err_msg}")
+        else:
+            self._set_capture_button_state(False)
+            self.btn_rail_start.setEnabled(True)
+            self.lbl_status.setText(f"Capture error: {err_msg}")
+            QtWidgets.QMessageBox.critical(self, "Capture Error", err_msg)
 
     def _on_abort(self):
         """Gửi lệnh hủy thu thập dữ liệu an toàn không dùng QThread.terminate()."""
+        was_repeat = getattr(self, "repeat_running", False)
+        self.repeat_running = False
         self._set_capture_button_state(False)
         if self.worker and self.worker.isRunning():
             self.worker.is_aborted = True
@@ -1490,9 +1693,15 @@ class MainWindow(QtWidgets.QMainWindow):
                 self.worker.wait(500)
             self.btn_rail_start.setEnabled(True)
             self.client.disconnect()
-            self.lbl_status.setText("Capture aborted by user")
+            if was_repeat:
+                self.lbl_status.setText(f"⏸ Auto-Repeat Paused: Frame #{self.repeat_frame_count} frozen")
+            else:
+                self.lbl_status.setText("Capture aborted by user")
         else:
-            self.lbl_status.setText("No capture currently in progress")
+            if was_repeat:
+                self.lbl_status.setText(f"⏸ Auto-Repeat Paused: Frame #{self.repeat_frame_count} frozen")
+            else:
+                self.lbl_status.setText("No capture currently in progress")
 
     def _render_capture_data(self, res: dict):
         """Hiển thị kết quả thu thập dữ liệu và giải mã protocol."""
