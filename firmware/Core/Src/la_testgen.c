@@ -7,6 +7,7 @@
   */
 
 #include "la_testgen.h"
+#include "la_core.h"
 #include <string.h>
 
 #if __has_include("main.h")
@@ -32,6 +33,15 @@ void la_testgen_init(void)
 
 void la_testgen_process(void)
 {
+    /* 
+     * Chỉ phát xung test khi hệ thống ở IDLE hoặc WAIT_TRIGGER (cung cấp cạnh xung cho loopback sang PA0).
+     * Tuyệt đối khóa trong ARMED, PRE_SAMPLING, POST_SAMPLING và TRANSFERRING để giải phóng CPU 1.3 ms và bảo toàn chế độ nghỉ __WFI().
+     */
+    la_state_t state = la_core_get_state();
+    if (state != LA_STATE_IDLE && state != LA_STATE_WAIT_TRIGGER) {
+        return;
+    }
+
     uint32_t now = HAL_GetTick();
     /* Phát chuỗi test định kỳ mỗi 20 ms để đảm bảo khung 32ms luôn bắt trọn ít nhất 1 frame */
     if ((now - g_last_tx_tick) >= 20) {

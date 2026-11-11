@@ -251,12 +251,15 @@ void DMA2_Stream5_IRQHandler(void)
 
 /**
   * @brief Trình phục vụ ngắt EXTI Line 0 (PA0 - Logic Analyzer Channel 0)
+  *        Nhiệm vụ 3: Inline trực tiếp lệnh kích hoạt TIM2 vào ISR để đưa trễ về mức tối thiểu.
   */
 void EXTI0_IRQHandler(void)
 {
   if (EXTI->PR & EXTI_PR_PR0) {
-    EXTI->PR = EXTI_PR_PR0;
-    la_core_on_exti_trigger_isr();
+    TIM2->CR1 |= TIM_CR1_CEN;     /* Kích hoạt TIM2 ngay lập tức tiệm cận phần cứng */
+    EXTI->IMR &= ~0x00FFU;        /* Khóa ngay ngắt EXTI 0..7 */
+    EXTI->PR = EXTI_PR_PR0;       /* Xóa cờ ngắt EXTI0 */
+    la_core_on_exti_trigger_isr(); /* Cập nhật trạng thái FSM */
   }
 }
 
@@ -266,6 +269,8 @@ void EXTI0_IRQHandler(void)
 void EXTI1_IRQHandler(void)
 {
   if (EXTI->PR & EXTI_PR_PR1) {
+    TIM2->CR1 |= TIM_CR1_CEN;
+    EXTI->IMR &= ~0x00FFU;
     EXTI->PR = EXTI_PR_PR1;
     la_core_on_exti_trigger_isr();
   }
@@ -277,6 +282,8 @@ void EXTI1_IRQHandler(void)
 void EXTI2_IRQHandler(void)
 {
   if (EXTI->PR & EXTI_PR_PR2) {
+    TIM2->CR1 |= TIM_CR1_CEN;
+    EXTI->IMR &= ~0x00FFU;
     EXTI->PR = EXTI_PR_PR2;
     la_core_on_exti_trigger_isr();
   }
@@ -288,6 +295,8 @@ void EXTI2_IRQHandler(void)
 void EXTI3_IRQHandler(void)
 {
   if (EXTI->PR & EXTI_PR_PR3) {
+    TIM2->CR1 |= TIM_CR1_CEN;
+    EXTI->IMR &= ~0x00FFU;
     EXTI->PR = EXTI_PR_PR3;
     la_core_on_exti_trigger_isr();
   }
@@ -299,6 +308,8 @@ void EXTI3_IRQHandler(void)
 void EXTI4_IRQHandler(void)
 {
   if (EXTI->PR & EXTI_PR_PR4) {
+    TIM2->CR1 |= TIM_CR1_CEN;
+    EXTI->IMR &= ~0x00FFU;
     EXTI->PR = EXTI_PR_PR4;
     la_core_on_exti_trigger_isr();
   }
@@ -311,6 +322,8 @@ void EXTI9_5_IRQHandler(void)
 {
   uint32_t pr = EXTI->PR & 0x00E0U; /* Lines 5, 6, 7 */
   if (pr != 0U) {
+    TIM2->CR1 |= TIM_CR1_CEN;
+    EXTI->IMR &= ~0x00FFU;
     EXTI->PR = pr;
     la_core_on_exti_trigger_isr();
   }

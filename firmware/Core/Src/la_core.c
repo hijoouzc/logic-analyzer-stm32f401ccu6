@@ -204,6 +204,7 @@ bool la_core_start_capture(uint8_t rate_idx, uint8_t trig_cfg)
 
 void la_core_abort(void)
 {
+    la_protocol_abort_stream();
 #if defined(TIM1)
     /* Dừng khẩn cấp TIM1, TIM2, DMA2 */
     TIM1->CR1 &= ~TIM_CR1_CEN;
@@ -226,52 +227,60 @@ void la_core_abort(void)
     g_la_state = LA_STATE_IDLE;
 }
 
+/**
+ * @brief  Chuyển FSM từ PRE_SAMPLING sang WAIT_TRIGGER hoặc POST_SAMPLING (Free-run)
+ *         được gọi ngay khi ghi đủ >= 6554 mẫu (20% pre-trigger) hoặc khi nhận cờ DMA HT.
+ */
+static void la_core_arm_trigger(void)
+{
+    if (g_la_state != LA_STATE_PRE_SAMPLING) {
+        return;
+    }
+    uint8_t mode = g_current_trig_cfg & 0x0F;
+    if (mode == 0x00) {
+        /* Free-run: Không chờ EXTI, kích hoạt ngay TIM2 One-Pulse */
+        g_la_state = LA_STATE_POST_SAMPLING;
+#if defined(TIM2)
+        TIM2->CNT = 0;
+        TIM2->CR1 |= TIM_CR1_CEN;
+#endif
+    } else {
+        /* Chế độ Edge Trigger: Cạnh lên (0x01) hoặc Cạnh xuống (0x02) */
+        uint8_t ch = (g_current_trig_cfg >> 4) & 0x07; /* Kênh 0..7 */
+
+        if (mode == 0x01) {
+            /* Cạnh lên (Rising Edge) */
+            EXTI->RTSR |= (1U << ch);
+            EXTI->FTSR &= ~(1U << ch);
+        } else if (mode == 0x02) {
+            /* Cạnh xuống (Falling Edge) */
+            EXTI->FTSR |= (1U << ch);
+            EXTI->RTSR &= ~(1U << ch);
+        }
+
+        /* Bắt đầu đếm timeout SysTick và cập nhật trạng thái TRƯỚC KHI mở ngắt EXTI */
+        g_timeout_counter_ms = 0;
+        g_la_state = LA_STATE_WAIT_TRIGGER;
+        __DSB(); /* Memory barrier: Bảo đảm state được ghi xuống SRAM trước khi unmask ngắt */
+
+        /* Xóa cờ ngắt cũ và mở ngắt EXTI trên kênh chỉ định */
+        EXTI->PR = (1U << ch);
+        EXTI->IMR |= (1U << ch);
+    }
+}
+
 void la_core_on_dma_ht_isr(void)
 {
-    /* Gọi khi nạp được 50% = 16.384 mẫu >= 20% Pre-trigger (6.554 mẫu) */
-    if (g_la_state == LA_STATE_PRE_SAMPLING) {
-        uint8_t mode = g_current_trig_cfg & 0x0F;
-        if (mode == 0x00) {
-            /* Free-run: Không chờ EXTI, kích hoạt ngay TIM2 One-Pulse */
-            g_la_state = LA_STATE_POST_SAMPLING;
-#if defined(TIM2)
-            TIM2->CNT = 0;
-            TIM2->CR1 |= TIM_CR1_CEN;
-#endif
-        } else {
-            /* Chế độ Edge Trigger: Cạnh lên (0x01) hoặc Cạnh xuống (0x02) */
-            uint8_t ch = (g_current_trig_cfg >> 4) & 0x07; /* Kênh 0..7 */
-
-            if (mode == 0x01) {
-                /* Cạnh lên (Rising Edge) */
-                EXTI->RTSR |= (1U << ch);
-                EXTI->FTSR &= ~(1U << ch);
-            } else if (mode == 0x02) {
-                /* Cạnh xuống (Falling Edge) */
-                EXTI->FTSR |= (1U << ch);
-                EXTI->RTSR &= ~(1U << ch);
-            }
-
-            /* Xóa cờ ngắt cũ và mở ngắt EXTI trên kênh chỉ định */
-            EXTI->PR = (1U << ch);
-            EXTI->IMR |= (1U << ch);
-
-            /* Bắt đầu đếm timeout SysTick */
-            g_timeout_counter_ms = 0;
-            g_la_state = LA_STATE_WAIT_TRIGGER;
-        }
-    }
+    /* Gọi khi nạp được 50% = 16.384 mẫu >= 20% Pre-trigger (fallback nếu chưa unmask từ dynamic check) */
+    la_core_arm_trigger();
 }
 
 void la_core_on_exti_trigger_isr(void)
 {
     if (g_la_state == LA_STATE_WAIT_TRIGGER) {
-        /* 1. Khóa ngay lập tức ngắt EXTI để chống kích hoạt lại nhiều lần */
+        /* Khóa ngay lập tức ngắt EXTI và kích hoạt TIM2 One-Pulse */
         EXTI->IMR &= ~0x00FFU;
-
-        /* 2. Kích hoạt TIM2 One-Pulse đếm 26.214 mẫu Post-trigger */
 #if defined(TIM2)
-        TIM2->CNT = 0;
         TIM2->CR1 |= TIM_CR1_CEN;
 #endif
         /* Đánh dấu bắt được trigger thành công */
@@ -286,6 +295,7 @@ void la_core_on_tim2_period_elapsed_isr(void)
 #if defined(TIM1)
         /* Dừng TIM1 ngay lập tức */
         TIM1->CR1 &= ~TIM_CR1_CEN;
+        __DSB(); /* Memory barrier: Xả sạch Write Buffer trên bus APB2 trước khi dừng DMA */
 
         /* Dừng DMA2 Stream 5 và đợi thanh ghi NDTR ổn định */
         DMA2_Stream5->CR &= ~DMA_SxCR_EN;
@@ -338,11 +348,27 @@ void la_core_on_systick_tick(void)
 
 void la_core_process(void)
 {
-    if (g_la_state == LA_STATE_TRANSFERRING) {
-        /* Thực hiện đóng gói 32.776 Bytes xoay vòng từ g_captured_write_pos và truyền qua USB-CDC phân đoạn 512B */
-        la_protocol_send_data_frame(g_captured_status, LA_TRIG_OFFSET_DEFAULT, la_capture_buffer, g_captured_write_pos);
-
-        la_set_led_active(false);
-        g_la_state = LA_STATE_IDLE;
+    /* Nhiệm vụ 2: Dynamic Pre-trigger - Mở ngắt EXTI ngay khi vừa đủ 20% bộ đệm (6.554 mẫu) */
+    if (g_la_state == LA_STATE_PRE_SAMPLING) {
+#if defined(TIM1)
+        uint16_t ndtr = (uint16_t)(DMA2_Stream5->NDTR);
+        uint16_t captured = LA_BUFFER_SIZE - ndtr;
+        if ((captured >= LA_PRE_TRIGGER_SAMPLES) || (DMA2->HISR & (DMA_HISR_HTIF5 | DMA_HISR_TCIF5))) {
+            la_core_arm_trigger();
+        }
+#else
+        la_core_arm_trigger();
+#endif
+    }
+    /* Nhiệm vụ 4: Non-blocking USB Streaming truyền 32.776B không chiếm dụng CPU */
+    else if (g_la_state == LA_STATE_TRANSFERRING) {
+        if (!la_protocol_is_streaming()) {
+            la_protocol_start_data_stream(g_captured_status, LA_TRIG_OFFSET_DEFAULT, la_capture_buffer, g_captured_write_pos);
+        } else {
+            if (la_protocol_process_stream()) {
+                la_set_led_active(false);
+                g_la_state = LA_STATE_IDLE;
+            }
+        }
     }
 }

@@ -98,6 +98,7 @@ int main(void)
   MX_TIM2_Init();
   MX_USART1_UART_Init();
   /* USER CODE BEGIN 2 */
+  la_protocol_init();
   la_core_init();
   la_testgen_init();
   /* USER CODE END 2 */
@@ -112,6 +113,11 @@ int main(void)
     la_protocol_process();
     la_core_process();
     la_testgen_process();
+
+    /* Nhiệm vụ 5: Tiết kiệm năng lượng & Giảm nhiễu Bus khi chờ Trigger */
+    if (la_core_get_state() == LA_STATE_WAIT_TRIGGER) {
+      __WFI();
+    }
   }
   /* USER CODE END 3 */
 }

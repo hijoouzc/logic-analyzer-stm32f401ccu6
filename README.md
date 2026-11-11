@@ -8,9 +8,9 @@
 
 | Mã vai trò | Họ và Tên | MSSV | Phân hệ Phụ trách | Thư mục Làm việc | Nhiệm vụ Trọng tâm |
 | :---: | :--- | :---: | :--- | :--- | :--- |
-| **TV1** | **Nguyễn Văn Hội** | **20233419** | **Firmware STM32** | `firmware/` | Cấu hình SYSCLK 84MHz, USB-CDC 48MHz, TIM1+TIM2 Cascade, DMA2_Stream5 đọc GPIOA->IDR, FSM Pre/Post-trigger, kênh phát UART PA9. |
+| **TV1** | **Nguyễn Văn Hội** | **20233419** | **Firmware STM32** | `firmware/` | Cấu hình SYSCLK 84MHz, USB-CDC 48MHz, TIM1+TIM2 Cascade, DMA2_Stream5 đọc `GPIOA->IDR`, FSM Pre/Post-trigger, kênh phát UART PA9, trọn bộ 5 kỹ thuật tối ưu hóa (Dynamic Pre-trigger, Inline ISR, Non-blocking Streaming, Fast Checksum, WFI). |
 | **TV2** | **Nguyễn Văn Khang** | **20233458** | **Phần cứng & Mô phỏng** | `hardware/` | Mô phỏng LTspice 4 kịch bản (quá áp +12V..+15V 8 kênh, xung 200V / 1ms 1 kênh trên trở động, đáp ứng 1-3MHz), thiết kế Schematic/PCB bảo vệ & đệm 74LVC245. |
-| **TV3** | **Nguyễn Trường Giang** | **20233374** | **Phần mềm PC (GUI & Decoder)** | `software/` | Viết Python Desktop GUI (PyQt5 + pyqtgraph), thuật toán giải mã UART 115200 bps (mở rộng I2C/SPI), bộ kiểm thử mock serial. |
+| **TV3** | **Nguyễn Trường Giang** | **20233374** | **Phần mềm PC (GUI & Decoder)** | `software/` | Viết Python Desktop GUI (PyQt5 + pyqtgraph 60 FPS), bộ giải mã đa giao thức (UART, SPI, I²C), cặp con trỏ đo Cursors A/B, bộ kiểm thử mock serial. |
 
 ---
 
@@ -117,6 +117,7 @@ Embedded_System/
 | **Bước 2: Loopback Self-Test** | USART1 TX trên PA9 phát test frame 115200 bps nối jumper sang PA0. | ✅ **Đã hoàn thành** |
 | **Bước 3: Full FSM Trigger** | DMA Half-Transfer -> Unmask EXTI -> Kích TIM2 One-Pulse -> Unroll Buffer. | ✅ **Đã hoàn thành** |
 | **Bước 4: Edge Cases & Polish**| Timeout SysTick, Ping, Abort, NAK, USB Watchdog 100ms. | ✅ **Đã hoàn thành** |
+| **Bước 5: Tối ưu hóa Toàn diện Hệ thống** | Fast Checksum XOR 32-bit (unroll 8x, <0.12 ms), Dynamic Pre-trigger 20% qua `NDTR` (rút ngắn 60% thời gian chờ ở tần số thấp), Inline Trigger ISR (18 clock cycles, sai số $\approx 1$ mẫu @ 6 MHz), Non-blocking USB Streaming 512B (CPU load <2%), Tiết kiệm điện và triệt tiêu nhiễu bus qua `__WFI()`. | ✅ **Đã hoàn thành** |
 
 ---
 

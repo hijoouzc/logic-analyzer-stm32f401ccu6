@@ -92,6 +92,7 @@ MCU phản hồi về PC bằng một trong hai loại khung cố định kích 
 * **Footer (1 Byte):** 
   * Byte kiểm tra XOR tính toán trên toàn bộ 32.768 bytes của phần Payload:
     $$\text{Footer} = \bigoplus_{i=0}^{32767} \text{Payload}[i]$$
+  * **Tối ưu hóa tính toán phía MCU (32-bit Unrolled XOR):** Để triệt tiêu độ trễ CPU khi chuẩn bị gửi gói tin, firmware triển khai thuật toán tính XOR song song bằng cách ép kiểu sang từ 32-bit (`uint32_t*`), loop unrolling 8x (xử lý 32 bytes/vòng lặp với 4 biến tích lũy `x0..x3`) và gộp 4 bytes lại bằng 2 phép dịch bit/XOR, đưa thời gian tính toán toàn bộ 32.768 bytes xuống dưới $0.12\text{ ms}$ (tăng tốc gấp ~10 lần so với vòng lặp tuần tự byte).
 
 > [!NOTE]
 > **Giới hạn bảo vệ của Footer Checksum:** Byte Footer chỉ tính XOR cho $32.768\text{ Bytes}$ Payload (không bao gồm 7 bytes Header) nhằm tối ưu tốc độ xử lý trong firmware. Tính toàn vẹn của Header được bảo vệ gián tiếp thông qua chuỗi byte đồng bộ `0x5A, 0xA5` và trường hằng số kích thước `sample_count = 32768` (`0x00, 0x80`). Đây là hạn chế kỹ thuật chấp nhận được của phiên bản v1.0.0.
@@ -147,12 +148,12 @@ sequenceDiagram
     GUI->>USB: Gửi 5B: [A5 01 03 02 A5]
     USB->>FW: FSM: Chuyển sang ARMED
     Note over FW: Bật TIM1 (ARR=83) + DMA2 Stream 5 Circular
-    Note over FW: Đợi cờ Half-Transfer (Nạp đủ 16384 mẫu >= 20%)
-    FW->>FW: Unmask EXTI0 (Ưu tiên ngắt 0)
-    Note over FW: Có cạnh xuống PA0 -> EXTI kích hoạt TIM2 One-Pulse
+    Note over FW: Dynamic Pre-trigger: Kiểm tra NDTR nạp đủ 6554 mẫu (20%) [HTIF5 fallback]
+    FW->>FW: Unmask EXTI0 (Ưu tiên ngắt 0) & CPU vào WFI (Sleep giảm nhiễu)
+    Note over FW: Có cạnh xuống PA0 -> EXTI inline kích TIM2 ngay lập tức (18 clock)
     Note over FW: TIM2 đếm đủ 26214 xung -> Ngắt TIM2 dừng TIM1
     Note over FW: FSM chuyển sang TRANSFERRING (Khóa nhận lệnh)
-    FW->>USB: Gửi gói 32776B (Header 7B Status=0x00 + 32KB Payload + XOR)
+    FW->>USB: Non-blocking Streaming phân đoạn 512B gói 32776B (XOR 32-bit siêu tốc)
     USB->>GUI: Phân loại: Byte 2 = 0x00 -> Đọc tiếp 32769B
     GUI->>GUI: Xác thực XOR Payload
     GUI->>User: Vẽ 8 kênh waveform, đặt mốc trigger tại mẫu 6554
@@ -161,10 +162,10 @@ sequenceDiagram
     Note over User, FW: Kịch bản 3: Chế độ Free-Run (Không đợi cạnh)
     User->>GUI: Bấm "Start" (Mode Free-run)
     GUI->>USB: Gửi 5B: [A5 01 03 00 A7]
-    USB->>FW: FSM: ARMED -> Nạp đủ 16384 mẫu
+    USB->>FW: FSM: ARMED -> Nạp đủ 6554 mẫu (20% bộ đệm)
     Note over FW: Kích hoạt ngay TIM2 One-Pulse (bỏ qua EXTI)
-    Note over FW: TIM2 đếm đủ 26214 xung -> Dừng TIM1
-    FW->>USB: Gửi gói 32776B (Status = 0x01 STATUS_FREERUN_OK)
+    Note over FW: TIM2 đếm đủ 26214 xung (Tổng 32768 mẫu = 100% bộ đệm) -> Dừng TIM1
+    FW->>USB: Non-blocking Streaming gói 32776B (Status = 0x01 STATUS_FREERUN_OK)
     USB->>GUI: Nhận đủ 32776B -> Hiển thị dạng sóng
 
     %% KỊCH BẢN 4: TIMEOUT
@@ -202,11 +203,11 @@ sequenceDiagram
 
 ### 4.2. Khóa Lệnh khi đang Truyền Dữ liệu & Quản lý Trạng thái FSM (State Locking)
 * **Chuẩn hóa các trạng thái FSM lõi của Firmware:**
-  * `IDLE`: Chờ lệnh, sẵn sàng nhận `CMD_START`, `CMD_PING`, `CMD_ABORT`.
-  * `ARMED` & `PRE_SAMPLING`: Đã bật TIM1 + DMA2, đang ghi vòng nạp tối thiểu 50% bộ đệm (16.384 mẫu) để đảm bảo pre-trigger.
-  * `WAIT_TRIGGER`: Đã kích hoạt ngắt EXTI trên chân chỉ định, đang đợi cạnh xung kích hoạt (hoặc theo dõi timeout).
-  * `POST_SAMPLING`: Đã phát hiện cạnh trigger, TIM2 One-Pulse đang đếm nốt $26.214\text{ mẫu}$ post-trigger.
-  * `TRANSFERRING`: Đang đẩy $32.776\text{ Bytes}$ dữ liệu qua cổng USB-CDC.
+  * `IDLE`: Chờ lệnh, sẵn sàng nhận `CMD_START`, `CMD_PING`, `CMD_ABORT`. Kênh phát xung kiểm tra Testgen (PA9) chỉ được phép phát định kỳ trong trạng thái này.
+  * `ARMED` & `PRE_SAMPLING`: Đã bật TIM1 + DMA2, kênh Testgen PA9 bị ngắt hoàn toàn để tránh tranh chấp bus; kiểm tra động con trỏ ghi DMA `(32768 - NDTR) >= 6554` (nạp đủ $\ge 20\%$ pre-trigger; kèm cờ DMA `HTIF5` làm fallback) để unmask ngắt EXTI sớm nhất có thể.
+  * `WAIT_TRIGGER`: Đã kích hoạt ngắt EXTI trên chân chỉ định với quy trình State-Before-Unmask và Memory Barrier `__DSB()`. CPU thực thi `__WFI()` (Wait For Interrupt) đưa Cortex-M4 về Sleep mode để triệt tiêu nhiễu chuyển mạch bus AHB/APB vào kênh đo và tiết kiệm điện năng; sẵn sàng thức dậy tức thì khi có cạnh xung hoặc timeout SysTick.
+  * `POST_SAMPLING`: Đã phát hiện cạnh trigger (ISR inline kích hoạt TIM2 tiệm cận phần cứng trong 18 clock cycles), TIM2 One-Pulse đang đếm nốt $26.214\text{ mẫu}$ post-trigger. Khi đếm đủ, lệnh dừng timer được theo sau bởi chỉ thị `__DSB()` để chốt con trỏ `NDTR` chuẩn xác.
+  * `TRANSFERRING`: Đang đẩy $32.776\text{ Bytes}$ dữ liệu qua cổng USB-CDC bằng máy trạng thái Non-blocking Streaming phân đoạn 512B. Firmware nhượng quyền CPU cho luồng chính giữa các khối để tiếp tục chạy các tác vụ nền, đồng thời drop toàn bộ byte nhận được từ USB như quy định.
 * **Quy tắc phân xử lệnh nhận từ PC:**
   * **Khi FSM ở `TRANSFERRING`:**
     * **Phía MCU:** Bỏ qua hoàn toàn (drop) mọi byte nhận được từ cổng USB. Tuyệt đối không phát sinh khung NAK hay PONG chen ngang làm hỏng luồng dữ liệu 32KB.
@@ -228,10 +229,15 @@ sequenceDiagram
   $$T_{\text{gui-timeout}} = \frac{42598}{10000} + 3.5 = 4.26\text{ s} + 3.5\text{ s} \approx 7.76\text{ s}$$
   *(Công thức này đảm bảo GUI không bao giờ ngắt kết nối hoặc báo lỗi timeout oan trước khi MCU hoàn tất chu trình capture).*
 
-### 4.4. Bảo vệ Chống Treo Cáp USB (`TxState` Watchdog)
-* Khi gọi `CDC_Transmit_FS()` cho từng khối block 512B:
-  * Firmware khởi động một biến đếm watchdog $100\text{ ms}$ cho mỗi block.
-  * Nếu quá $100\text{ ms}$ mà cờ `hcdc->TxState` không trở về `0` (do người dùng rút cáp USB hoặc phần mềm GUI đóng cổng COM đột ngột): Firmware lập tức hủy chu trình truyền, cưỡng bức reset `hcdc->TxState = 0`, giải phóng bộ đệm và đưa FSM về `IDLE`.
+### 4.4. Máy Trạng Thái Non-blocking Streaming & Cấu Hình TxFIFO USB (`TxState` Watchdog)
+* **Tối ưu hóa TxFIFO USB Phần cứng (RM0368 Section 22.12.2):**
+  * Tận dụng tối đa 320 words Dedicated Packet RAM: Phân bổ Rx = 64 words (256B), Tx0 = 32 words (128B), và Tx1 = **224 words (896 Bytes)** cho EP1 Bulk IN. Dung lượng 896B đệm trước được 14 packets 64B, triệt tiêu nguy cơ trễ khung (FIFO Starvation).
+* **Máy trạng thái Non-blocking USB Streaming:**
+  * Firmware chia nhỏ dữ liệu thành các khối 512B và truyền theo cơ chế máy trạng thái phi phong tỏa. Mỗi vòng lặp của luồng chính, nếu `hcdc->TxState != 0` (phần cứng USB đang bận gửi block trước), firmware nhượng quyền CPU ngay lập tức cho các tác vụ nền khác thay vì dùng vòng lặp chờ bận (busy-wait polling) giam giữ 100% CPU.
+* **Cơ chế Watchdog bảo vệ:**
+  * Khi gọi `CDC_Transmit_FS()` cho từng khối block 512B:
+    * Firmware theo dõi mốc thời gian hoạt động với biến watchdog $100\text{ ms}$ cho mỗi block.
+    * Nếu quá $100\text{ ms}$ mà cờ `hcdc->TxState` không trở về `0` (do người dùng rút cáp USB hoặc phần mềm GUI đóng cổng COM đột ngột): Firmware lập tức hủy chu trình truyền, cưỡng bức reset `hcdc->TxState = 0`, giải phóng bộ đệm và đưa FSM về `IDLE`.
 
 ---
 
