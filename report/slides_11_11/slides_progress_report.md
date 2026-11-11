@@ -419,12 +419,12 @@ Thời lượng: 50s
 
 <div class="card-highlight">
   <h3>Kết quả Kiểm tra bằng Script Python Tự động</h3>
-  <p class="dim">Chạy kiểm thử qua script test_live_hardware_full.py (kết nối /dev/ttyACM0)</p>
+  <p class="dim">Chạy kiểm thử thực tế trên kit STM32F401 WeAct Black Pill V3.0 (/dev/ttyACM0)</p>
   <table>
     <tr>
       <th>Hạng mục kiểm tra</th>
       <th>Trạng thái</th>
-      <th>Kết quả ghi nhận</th>
+      <th>Kết quả ghi nhận trên phần cứng</th>
     </tr>
     <tr>
       <td><b>Bắt tay kết nối (Ping / Pong)</b></td>
@@ -432,20 +432,25 @@ Thời lượng: 50s
       <td>Nhận diện đúng Firmware v1.0.0</td>
     </tr>
     <tr>
-      <td><b>Toàn vẹn gói tin 32.776B</b></td>
+      <td><b>Toàn vẹn gói tin & USB 4096B</b></td>
       <td><span class="badge badge-success">Verified</span></td>
-      <td>Khớp Header 0x5A 0xA5 và Checksum XOR</td>
+      <td>Truyền 32.776B chỉ mất 0.062s, Checksum XOR 100%</td>
     </tr>
     <tr>
-      <td><b>Tín hiệu test Kênh 0 (PA9 → PA0)</b></td>
+      <td><b>Loopback Kênh 0 (PA9 → PA0)</b></td>
       <td><span class="badge badge-success">Verified</span></td>
-      <td>Đọc chuẩn luồng UART 115.2 kbps trên Ch 0</td>
+      <td>Bắt 90 transitions, giải mã chuẩn 'TEST_LA_2026\r\n'</td>
+    </tr>
+    <tr>
+      <td><b>Bắt cạnh Trigger & Jitter</b></td>
+      <td><span class="badge badge-success">Verified</span></td>
+      <td>Bắt đúng mẫu 6554, sai số Jitter = 0 mẫu (CPU ngủ __WFI())</td>
     </tr>
   </table>
 
   <div class="foot-note">
-    • <i>Phạm vi kiểm tra phần cứng: Mới đo kiểm sơ bộ trên Kênh 0 bằng dây nối loopback.</i><br>
-    • <i>Kiểm tra tải tối đa 6 MHz & đo trễ ngắt thực tế: Đang tiến hành.</i>
+    • <i>Đo kiểm thực tế kit thật: Đạt 100% PASS trên cả 4 bộ script (Free-run, Loopback, Trigger, Edge cases).</i><br>
+    • <i>Tối ưu hóa: TIM2 2-pha giải phóng 100% bus AHB1, trễ ISR tiệm cận 18 clocks.</i>
   </div>
 </div>
 

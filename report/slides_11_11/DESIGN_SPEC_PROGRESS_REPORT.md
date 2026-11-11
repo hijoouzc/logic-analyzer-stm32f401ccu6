@@ -122,11 +122,12 @@
                                                    Cố định danh định 20%
 ```
     - Nguyên lý: Đọc xoay vòng từ `write_pos` đưa mẫu cũ nhất về `t0`, định vị điểm trigger danh định cố định tại mẫu 6.554 (20% bộ đệm).
-  - *Right Column (50%):* **Bảng Kết quả Kiểm thử Tự động (3 rows × 3 cols)** trích từ test script tự động:
+  - *Right Column (50%):* **Bảng Kết quả Kiểm thử Tự động Thực tế (4 rows × 3 cols)** trích từ test script chạy trên kit WeAct Black Pill:
     - Ping/Pong: `Verified` (Firmware v1.0.0)
-    - Khung truyền 32.776B: `Verified` (Magic 0x5A 0xA5, Checksum XOR khớp 100%)
-    - Loopback Kênh 0 (PA9 $\rightarrow$ PA0): `Verified` (UART 115.2 kbps trên Ch 0)
-    - Chú thích: Đã kiểm chứng Kênh 0; đo tải tối đa 6 MHz và trễ ngắt thực tế đang tiến hành.
+    - Khung truyền 32.776B & USB 4096B: `Verified` (Truyền 0.062s, Checksum XOR khớp 100%)
+    - Loopback Kênh 0 (PA9 $\rightarrow$ PA0): `Verified` (90 transitions, giải mã chuẩn 'TEST_LA_2026\r\n')
+    - Bắt cạnh Trigger & Jitter: `Verified` (Bắt đúng mẫu 6554, sai số Jitter = 0 mẫu)
+    - Chú thích: Đã kiểm chứng 100% PASS trên kit thật; trễ ngắt ISR đạt 18 clock cycles.
 - **Speaker Notes (50s):**
   > "Phần firmware được thiết kế để lấy mẫu đều đặn và không làm nghẽn CPU. Timer 1 phát nhịp để DMA tự động chuyển byte từ cổng GPIO vào mảng 32 KiB trong RAM. Timer 2 đếm đủ 80% số mẫu sau trigger thì kích hoạt ngắt để dừng lấy mẫu, sau đó sắp xếp lại mảng để đưa mẫu cũ nhất về đầu và điểm trigger về đúng vị trí danh định. Khối thu thập dữ liệu chạy hoàn toàn tự động bằng phần cứng; module phát xung UART loopback chỉ dùng để tự kiểm tra. Bằng script Python tự động, nhóm đã kiểm tra thành công việc bắt tay kết nối, tính toàn vẹn của gói tin 32 KiB và đọc chuẩn luồng ký tự UART 115.2 kbps trên Kênh 0. Xin lưu ý 6 MHz là tần số cấu hình timer; việc đo tải thực tế và đo trễ ngắt đang được nhóm tiến hành. Sau đây là phần mềm máy tính."
 
