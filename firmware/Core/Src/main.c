@@ -114,8 +114,8 @@ int main(void)
     la_core_process();
     la_testgen_process();
 
-    /* Nhiệm vụ 5: Tiết kiệm năng lượng & Giảm nhiễu Bus khi chờ Trigger */
-    if (la_core_get_state() == LA_STATE_WAIT_TRIGGER) {
+    /* Nhiệm vụ 5: Tiết kiệm năng lượng & Giảm nhiễu Bus khi lấy mẫu Pre-sampling hoặc chờ Trigger */
+    if (la_core_get_state() == LA_STATE_PRE_SAMPLING || la_core_get_state() == LA_STATE_WAIT_TRIGGER) {
       __WFI();
     }
   }

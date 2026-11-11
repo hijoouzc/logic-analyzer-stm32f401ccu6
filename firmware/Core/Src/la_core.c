@@ -164,11 +164,19 @@ bool la_core_start_capture(uint8_t rate_idx, uint8_t trig_cfg)
     TIM1->EGR = TIM_EGR_UG;
     TIM1->SR  = 0;
 
-    /* 3. Cấu hình đếm 26.214 mẫu trên TIM2 One-Pulse và xóa cờ tồn dư */
-    TIM2->ARR = LA_POST_TRIGGER_SAMPLES - 1; /* 26213 */
+    /* 3. Cấu hình chu kỳ đếm cho TIM2 One-Pulse tùy theo chế độ trigger */
+    uint8_t mode = trig_cfg & 0x0F;
+    if (mode == 0x00) {
+        /* Free-run: đếm trọn 32.768 mẫu không ngắt trung gian */
+        TIM2->ARR = LA_BUFFER_SIZE - 1; /* 32767 */
+    } else {
+        /* Edge Trigger: Phase 1 đếm đúng 6.554 mẫu pre-trigger (20%) */
+        TIM2->ARR = LA_PRE_TRIGGER_SAMPLES - 1; /* 6553 */
+    }
     TIM2->CNT = 0;
     TIM2->EGR = TIM_EGR_UG;
     TIM2->SR  = 0;
+    TIM2->CR1 |= TIM_CR1_CEN; /* Bật TIM2 đếm ngay từ mẫu đầu tiên */
 
     /* 4. Khóa toàn bộ ngắt EXTI trong giai đoạn Pre-trigger (chống rỗng pre-trigger) */
     EXTI->IMR &= ~0x00FFU;
@@ -209,6 +217,7 @@ void la_core_abort(void)
     /* Dừng khẩn cấp TIM1, TIM2, DMA2 */
     TIM1->CR1 &= ~TIM_CR1_CEN;
     TIM2->CR1 &= ~TIM_CR1_CEN;
+    __DSB();
     DMA2_Stream5->CR &= ~DMA_SxCR_EN;
     while (DMA2_Stream5->CR & DMA_SxCR_EN) {
     }
@@ -228,8 +237,8 @@ void la_core_abort(void)
 }
 
 /**
- * @brief  Chuyển FSM từ PRE_SAMPLING sang WAIT_TRIGGER hoặc POST_SAMPLING (Free-run)
- *         được gọi ngay khi ghi đủ >= 6554 mẫu (20% pre-trigger) hoặc khi nhận cờ DMA HT.
+ * @brief  Chuyển FSM từ PRE_SAMPLING sang WAIT_TRIGGER hoặc kết thúc Free-run
+ *         được gọi từ TIM2 ngắt Phase 1 (đủ 6.554 mẫu pre-trigger = 20%).
  */
 static void la_core_arm_trigger(void)
 {
@@ -238,14 +247,33 @@ static void la_core_arm_trigger(void)
     }
     uint8_t mode = g_current_trig_cfg & 0x0F;
     if (mode == 0x00) {
-        /* Free-run: Không chờ EXTI, kích hoạt ngay TIM2 One-Pulse */
-        g_la_state = LA_STATE_POST_SAMPLING;
-#if defined(TIM2)
-        TIM2->CNT = 0;
-        TIM2->CR1 |= TIM_CR1_CEN;
+        /* Free-run: Đã đếm trọn 32.768 mẫu -> Dừng ngay lập tức */
+#if defined(TIM1)
+        TIM1->CR1 &= ~TIM_CR1_CEN;
+        __DSB(); /* Memory barrier: Xả sạch Write Buffer trên bus APB2 trước khi dừng DMA */
+
+        DMA2_Stream5->CR &= ~DMA_SxCR_EN;
+        while (DMA2_Stream5->CR & DMA_SxCR_EN) {
+        }
+
+        uint16_t ndtr = (uint16_t)(DMA2_Stream5->NDTR);
+        g_captured_write_pos = (LA_BUFFER_SIZE - ndtr) % LA_BUFFER_SIZE;
+
+        hdma_tim1_up.State = HAL_DMA_STATE_READY;
+        __HAL_UNLOCK(&hdma_tim1_up);
+#else
+        g_captured_write_pos = 0;
 #endif
+        g_captured_status = LA_STATUS_FREERUN_OK;
+        g_la_state = LA_STATE_TRANSFERRING;
     } else {
-        /* Chế độ Edge Trigger: Cạnh lên (0x01) hoặc Cạnh xuống (0x02) */
+        /* Chế độ Edge Trigger: Phase 1 kết thúc -> Cấu hình TIM2 Phase 2 (26.214 mẫu) và mở ngắt EXTI */
+#if defined(TIM2)
+        TIM2->CR1 &= ~TIM_CR1_CEN; /* Đảm bảo TIM2 dừng, chờ EXTI kích hoạt */
+        TIM2->ARR = LA_POST_TRIGGER_SAMPLES - 1; /* 26213 */
+        TIM2->CNT = 0;
+        TIM2->SR = 0;
+#endif
         uint8_t ch = (g_current_trig_cfg >> 4) & 0x07; /* Kênh 0..7 */
 
         if (mode == 0x01) {
@@ -271,8 +299,11 @@ static void la_core_arm_trigger(void)
 
 void la_core_on_dma_ht_isr(void)
 {
-    /* Gọi khi nạp được 50% = 16.384 mẫu >= 20% Pre-trigger (fallback nếu chưa unmask từ dynamic check) */
-    la_core_arm_trigger();
+    /* TIM2 Hardware Counter 2-Pha đã tự động hoàn thành Pre-trigger tại mẫu 6.554 (20%).
+     * Hàm này giữ lại để tương thích ngắt DMA2 Stream 5 HTIF5 (fallback an toàn). */
+    if (g_la_state == LA_STATE_PRE_SAMPLING) {
+        la_core_arm_trigger();
+    }
 }
 
 void la_core_on_exti_trigger_isr(void)
@@ -291,7 +322,10 @@ void la_core_on_exti_trigger_isr(void)
 
 void la_core_on_tim2_period_elapsed_isr(void)
 {
-    if (g_la_state == LA_STATE_POST_SAMPLING) {
+    if (g_la_state == LA_STATE_PRE_SAMPLING) {
+        /* Phase 1 kết thúc (đủ 6.554 mẫu pre-trigger = 20% hoặc 32.768 mẫu Free-run) */
+        la_core_arm_trigger();
+    } else if (g_la_state == LA_STATE_POST_SAMPLING) {
 #if defined(TIM1)
         /* Dừng TIM1 ngay lập tức */
         TIM1->CR1 &= ~TIM_CR1_CEN;
@@ -328,6 +362,8 @@ void la_core_on_systick_tick(void)
 
 #if defined(TIM1)
             TIM1->CR1 &= ~TIM_CR1_CEN;
+            TIM2->CR1 &= ~TIM_CR1_CEN;
+            __DSB();
             DMA2_Stream5->CR &= ~DMA_SxCR_EN;
             while (DMA2_Stream5->CR & DMA_SxCR_EN) {
             }
@@ -348,20 +384,9 @@ void la_core_on_systick_tick(void)
 
 void la_core_process(void)
 {
-    /* Nhiệm vụ 2: Dynamic Pre-trigger - Mở ngắt EXTI ngay khi vừa đủ 20% bộ đệm (6.554 mẫu) */
-    if (g_la_state == LA_STATE_PRE_SAMPLING) {
-#if defined(TIM1)
-        uint16_t ndtr = (uint16_t)(DMA2_Stream5->NDTR);
-        uint16_t captured = LA_BUFFER_SIZE - ndtr;
-        if ((captured >= LA_PRE_TRIGGER_SAMPLES) || (DMA2->HISR & (DMA_HISR_HTIF5 | DMA_HISR_TCIF5))) {
-            la_core_arm_trigger();
-        }
-#else
-        la_core_arm_trigger();
-#endif
-    }
-    /* Nhiệm vụ 4: Non-blocking USB Streaming truyền 32.776B không chiếm dụng CPU */
-    else if (g_la_state == LA_STATE_TRANSFERRING) {
+    /* Trong PRE_SAMPLING: TIM2 cascade phần cứng tự động đếm 6.554 mẫu,
+       CPU ngủ __WFI() hoàn toàn trong main loop mà không cần polling NDTR. */
+    if (g_la_state == LA_STATE_TRANSFERRING) {
         if (!la_protocol_is_streaming()) {
             la_protocol_start_data_stream(g_captured_status, LA_TRIG_OFFSET_DEFAULT, la_capture_buffer, g_captured_write_pos);
         } else {

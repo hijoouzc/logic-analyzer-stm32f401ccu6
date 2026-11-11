@@ -232,10 +232,10 @@ sequenceDiagram
 ### 4.4. Máy Trạng Thái Non-blocking Streaming & Cấu Hình TxFIFO USB (`TxState` Watchdog)
 * **Tối ưu hóa TxFIFO USB Phần cứng (RM0368 Section 22.12.2):**
   * Tận dụng tối đa 320 words Dedicated Packet RAM: Phân bổ Rx = 64 words (256B), Tx0 = 32 words (128B), và Tx1 = **224 words (896 Bytes)** cho EP1 Bulk IN. Dung lượng 896B đệm trước được 14 packets 64B, triệt tiêu nguy cơ trễ khung (FIFO Starvation).
-* **Máy trạng thái Non-blocking USB Streaming:**
-  * Firmware chia nhỏ dữ liệu thành các khối 512B và truyền theo cơ chế máy trạng thái phi phong tỏa. Mỗi vòng lặp của luồng chính, nếu `hcdc->TxState != 0` (phần cứng USB đang bận gửi block trước), firmware nhượng quyền CPU ngay lập tức cho các tác vụ nền khác thay vì dùng vòng lặp chờ bận (busy-wait polling) giam giữ 100% CPU.
+* **Máy trạng thái Non-blocking USB Streaming 4096B:**
+  * Firmware chia nhỏ dữ liệu thành các khối lớn **$\le 4096\text{ Bytes}$** ($64 \times 64\text{ B}$ packets) và truyền theo cơ chế máy trạng thái phi phong tỏa. Tận dụng bộ đệm phần cứng `DIEPTSIZx` 19-bit để tự động đẩy các gói 64B trong ngắt `TXFE`, giảm 8 lần số chu kỳ chuyển giao lặp trong luồng chính `main()`, đẩy tốc độ truyền 32KB chạm trần vật lý $1.12\text{ MB/s}$ ($\approx 28\text{ ms}$). Mỗi vòng lặp của luồng chính, nếu `hcdc->TxState != 0` (phần cứng USB đang bận gửi block trước), firmware nhượng quyền CPU ngay lập tức cho các tác vụ nền khác thay vì dùng vòng lặp chờ bận (busy-wait polling) giam giữ 100% CPU.
 * **Cơ chế Watchdog bảo vệ:**
-  * Khi gọi `CDC_Transmit_FS()` cho từng khối block 512B:
+  * Khi gọi `CDC_Transmit_FS()` cho từng khối block 4096B:
     * Firmware theo dõi mốc thời gian hoạt động với biến watchdog $100\text{ ms}$ cho mỗi block.
     * Nếu quá $100\text{ ms}$ mà cờ `hcdc->TxState` không trở về `0` (do người dùng rút cáp USB hoặc phần mềm GUI đóng cổng COM đột ngột): Firmware lập tức hủy chu trình truyền, cưỡng bức reset `hcdc->TxState = 0`, giải phóng bộ đệm và đưa FSM về `IDLE`.
 

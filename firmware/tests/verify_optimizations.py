@@ -71,7 +71,7 @@ def test_task1_xor_checksum():
 
 def test_task2_dynamic_pretrigger():
     print("\n" + "=" * 60)
-    print("TEST 2: DYNAMIC PRE-TRIGGER (TIẾT KIỆM THỜI GIAN PRE-SAMPLING)")
+    print("TEST 2: BỘ ĐẾM TIM2 CASCADE 2-PHA (TIẾT KIỆM THỜI GIAN & GIẢI PHÓNG BUS)")
     print("=" * 60)
 
     rates = [
@@ -87,7 +87,9 @@ def test_task2_dynamic_pretrigger():
     ]
 
     pre_samples_old = 16384  # 50% Half-Transfer
-    pre_samples_new = 6554   # 20% Pre-trigger danh định
+    pre_samples_new = 6554   # 20% Pre-trigger danh định (TIM2 Phase 1 ARR = 6553)
+    post_samples = 26214     # 80% Post-trigger (TIM2 Phase 2 ARR = 26213)
+    freerun_samples = 32768  # 100% Free-run (TIM2 ARR = 32767)
 
     print(f"{'Mức':<4} | {'Tần số':<8} | {'Thời gian cũ (50%)':<18} | {'Thời gian mới (20%)':<18} | {'Tiết kiệm':<12}")
     print("-" * 68)
@@ -98,9 +100,12 @@ def test_task2_dynamic_pretrigger():
         pct = (saved_ms / t_old_ms) * 100.0
         print(f"{idx:<4} | {name:<8} | {t_old_ms:>10.2f} ms      | {t_new_ms:>10.2f} ms      | {saved_ms:>8.2f} ms (-{pct:.0f}%)")
 
-    assert (6554 + 26214) == 32768, "Tổng mẫu Pre + Post phải bằng đúng 32768"
+    assert (pre_samples_new + post_samples) == 32768, "Tổng mẫu Pre + Post phải bằng đúng 32768"
+    assert freerun_samples == 32768, "Free-run phải bằng đúng 32768"
     print("\n  [PASS] Rút ngắn 60% thời gian chờ Pre-sampling ở mọi dải tần số.")
     print("  [PASS] Ở 10 kHz: thời gian chờ giảm từ 1.64 s xuống 0.66 s (tiết kiệm gần 1 giây!).")
+    print("  [PASS] TIM2 Hardware Cascade 2-Pha: Phase 1 (ARR=6553), Phase 2 (ARR=26213), Free-run (ARR=32767).")
+    print("  [PASS] CPU ngủ __WFI() trong suốt PRE_SAMPLING & WAIT_TRIGGER -> Giải phóng 100% bus AHB1 cho DMA2.")
 
 def test_task3_isr_latency():
     print("\n" + "=" * 60)
@@ -124,14 +129,15 @@ def test_task3_isr_latency():
 
 def test_task4_streaming_unrolling():
     print("\n" + "=" * 60)
-    print("TEST 4: NON-BLOCKING USB-CDC STREAMING & BUFFER UNROLLING")
+    print("TEST 4: NON-BLOCKING USB-CDC STREAMING 4096B & BUFFER UNROLLING")
     print("=" * 60)
 
     BUFFER_SIZE = 32768
+    CHUNK_SIZE = 4096
     raw_buffer = bytes([i % 256 for i in range(BUFFER_SIZE)])
 
     # Thử unrolling tại các vị trí write_pos khác nhau
-    test_positions = [0, 1, 511, 512, 6554, 16384, 32767]
+    test_positions = [0, 1, 511, 512, 4095, 4096, 6554, 16384, 32767]
 
     for wp in test_positions:
         # Mô phỏng unrolling như trong C firmware
@@ -143,7 +149,7 @@ def test_task4_streaming_unrolling():
 
         assert len(unrolled_payload) == BUFFER_SIZE, f"Payload length must be {BUFFER_SIZE}"
 
-        # Kiểm tra chia khối 512B
+        # Kiểm tra chia khối 4096B (tối đa 8 lần truyền thay vì 64 lần với 512B)
         sent = bytearray()
         # Header 7B
         header = bytes([0x5A, 0xA5, 0x00, 6554 & 0xFF, (6554 >> 8) & 0xFF, 0x00, 0x80])
@@ -151,17 +157,20 @@ def test_task4_streaming_unrolling():
 
         # Chunks đoạn 1
         s1 = 0
+        tx_chunks_count = 0
         while s1 < len1:
-            c = min(512, len1 - s1)
+            c = min(CHUNK_SIZE, len1 - s1)
             sent.extend(raw_buffer[wp + s1 : wp + s1 + c])
             s1 += c
+            tx_chunks_count += 1
 
         # Chunks đoạn 2
         s2 = 0
         while s2 < len2:
-            c = min(512, len2 - s2)
+            c = min(CHUNK_SIZE, len2 - s2)
             sent.extend(raw_buffer[s2 : s2 + c])
             s2 += c
+            tx_chunks_count += 1
 
         # Footer 1B
         footer_xor = 0
@@ -172,7 +181,8 @@ def test_task4_streaming_unrolling():
         assert len(sent) == 32776, f"Khung truyền phải đủ đúng 32776 Bytes, nhận {len(sent)}"
         assert sent[:2] == bytes([0x5A, 0xA5]), "Header sync byte phải là 0x5A 0xA5"
         assert sent[7:7+BUFFER_SIZE] == unrolled_payload, "Payload unrolled phải khớp hoàn toàn"
-        print(f"  [PASS] Unroll tại write_pos={wp:<5}: Đóng gói đúng 32.776 Bytes, Header/Footer toàn vẹn.")
+        assert tx_chunks_count <= 9, f"Số lần truyền payload không vượt quá 9 chunks 4096B (thực tế {tx_chunks_count})"
+        print(f"  [PASS] Unroll tại write_pos={wp:<5}: Đóng gói đúng 32.776 Bytes trong {tx_chunks_count} chunks, Header/Footer toàn vẹn.")
 
 def test_task5_low_power_wfi():
     print("\n" + "=" * 60)

@@ -49,18 +49,18 @@ Khi có mâu thuẫn kỹ thuật, Agent tuân thủ thứ bậc ưu tiên:
 3. **Ưu tiên ngắt NVIC:** Priority 0 (EXTI Trigger) > Priority 1 (TIM2 Dừng lấy mẫu) > Priority 2 (USB OTG_FS).
 4. **Máy trạng thái FSM (5 bước & Tối ưu hóa Chuyên sâu):**
    `IDLE ───> ARMED ───> PRE_SAMPLING ───> WAIT_TRIGGER ───(Ngắt EXTI Trigger)───> POST_SAMPLING ───> TRANSFERRING ───> IDLE`
-   * Ở `PRE_SAMPLING`, áp dụng cơ chế **Dynamic Pre-trigger**: kiểm tra liên tục con trỏ ghi DMA `(32768 - DMA2_Stream5->NDTR) >= 6554` (kèm cờ dự phòng `HTIF5` tại 50%) để unmask EXTI ngay khi vừa đủ 20% pre-trigger danh định (tiết kiệm gần $1.0\text{ s}$ ở 10 kHz).
+   * Ở `PRE_SAMPLING`, áp dụng cơ chế **Bộ đếm TIM2 Phần cứng 2 Pha**: TIM2 nạp `ARR = 6553` đếm đúng 6.554 mẫu pre-trigger (20%) rồi tự dừng bằng OPM. Ngắt `TIM2_IRQHandler` (lần 1) nạp lại `ARR = 26213` (80%), reset `CNT = 0` và unmask EXTI. Ở Free-run, TIM2 nạp ngay `ARR = 32767` đếm trọn 32.768 mẫu không ngắt.
+   * **Giải phóng 100% Bus AHB1 & Giảm Nhiễu:** Trong cả 2 trạng thái `PRE_SAMPLING` và `WAIT_TRIGGER`, CPU thực thi lệnh `__WFI()` (Wait For Interrupt) đưa Cortex-M4 về chế độ Sleep, triệt tiêu 100% lưu lượng bus AHB1 từ CPU, nhường toàn bộ bus cho DMA2 với 0% jitter.
    * **Triệt tiêu Race Condition sống còn:** Khi unmask EXTI, bắt buộc thực hiện theo thứ tự: Gán `g_la_state = LA_STATE_WAIT_TRIGGER;`, gọi `__DSB();` để bảo đảm biến trạng thái được ghi xuống SRAM, rồi mới mở ngắt `EXTI->IMR |= (1U << ch);`.
-   * Trong trạng thái `WAIT_TRIGGER`, CPU gọi lệnh `__WFI()` (Wait For Interrupt) đưa Cortex-M4 về chế độ Sleep tiết kiệm điện năng và triệt tiêu nhiễu xung nhịp nội bộ bus AHB/APB vào các kênh đo.
-   * Chế độ Free-run bỏ qua EXTI, bật thẳng TIM2 khi vừa đủ 6.554 mẫu (hoặc cờ `HTIF5`). Timeout động $T = (16384/f_s) + 2.0\text{ s}$ quản lý bởi SysTick. Chi tiết xem `protocol.md`.
+   * Timeout động $T = (16384/f_s) + 2.0\text{ s}$ quản lý bởi SysTick. Chi tiết xem `protocol.md`.
 5. **Cơ chế Unrolling & Sai số Trigger (Inline Hardware Trigger & Memory Barrier):**
    * Dữ liệu truyền xoay vòng từ `write_pos = 32768 - NDTR` đến cuối mảng rồi tiếp tục từ đầu mảng đến `write_pos - 1`, định vị điểm trigger danh định tại mẫu $t_{6554}$ (`trig_offset = 6554`).
    * **Tối ưu hóa trễ ISR Inline:** Các chỉ thị kích hoạt timer được inline trực tiếp vào đầu ngắt `EXTI_IRQHandler` (`TIM2->CR1 |= TIM_CR1_CEN; EXTI->IMR &= ~0x00FFU; EXTI->PR = pr;`), rút ngắn độ trễ từ lúc có cạnh xung đến khi TIM2 đếm xung xuống mức tiệm cận phần cứng chỉ 18 clock cycles ($\approx 214\text{ ns}$ @ 84 MHz), sai số vật lý chỉ còn $\approx 1$ mẫu ở 6 MHz (thay vì 2–3 mẫu).
    * **Memory Barrier khi dừng:** Lệnh dừng `TIM1->CR1 &= ~TIM_CR1_CEN` trong `TIM2_IRQHandler` bắt buộc đi kèm `__DSB();` để xả sạch Write Buffer trên bus APB2 trước khi dừng DMA và chốt con trỏ `NDTR`.
 6. **Khóa lệnh khi truyền & Non-blocking Streaming:**
    * Trong trạng thái `TRANSFERRING`, drop toàn bộ byte nhận từ USB để không làm gián đoạn luồng truyền 32KB. Ở các trạng thái bắt tín hiệu khác: nhận `CMD_START` trả NAK `0xE3`; nhận `CMD_PING` trả PONG `0x04`; nhận `CMD_ABORT` trả `0x05`.
-   * **Non-blocking Streaming, TxFIFO & Fast XOR:** Quá trình truyền phân đoạn theo block 512B do máy trạng thái phi phong tỏa điều khiển; khi `hcdc->TxState != 0`, firmware nhượng CPU cho luồng chính để tiếp tục các tác vụ khác (tải CPU $< 2\%$, kèm watchdog 100ms bảo vệ chống treo). Tận dụng tối đa 320 words Dedicated Packet RAM của USB OTG_FS (Rx = 64 words, Tx0 = 32 words, Tx1 = 224 words = 896B Bulk IN). Tính Checksum XOR 32-bit unrolled 8x hoàn tất 32KB trong $< 0.12\text{ ms}$.
-   * **Cô lập Kênh phát Testgen PA9:** `la_testgen_process()` chỉ được phép phát xung khi FSM ở `LA_STATE_IDLE`, ngắt hoàn toàn khi đang capture để không giam giữ CPU 1.3 ms và bảo toàn chế độ nghỉ `__WFI()`.
+   * **Non-blocking Streaming 4096B, TxFIFO & Fast XOR:** Quá trình truyền phân đoạn theo block lớn **$\le 4096\text{ Bytes}$** ($64 \times 64\text{ B}$ packets) do máy trạng thái phi phong tỏa điều khiển; giảm 8 lần số chu kỳ lặp nạp trong `main()`, đẩy tốc độ chạm trần $1.12\text{ MB/s}$ ($\approx 28\text{ ms}$). Tận dụng tối đa 320 words Dedicated Packet RAM của USB OTG_FS (Rx = 64 words, Tx0 = 32 words, Tx1 = 224 words = 896B Bulk IN). Tính Checksum XOR 32-bit unrolled 8x hoàn tất 32KB trong $< 0.12\text{ ms}$.
+   * **Cô lập Kênh phát Testgen PA9:** `la_testgen_process()` chỉ được phép phát xung khi FSM ở `LA_STATE_IDLE` hoặc `LA_STATE_WAIT_TRIGGER`, ngắt hoàn toàn khi đang `ARMED`, `PRE_SAMPLING`, `POST_SAMPLING` và `TRANSFERRING` để không giam giữ CPU 1.3 ms và bảo toàn chế độ nghỉ `__WFI()`.
 
 ---
 

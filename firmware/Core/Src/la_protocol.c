@@ -23,6 +23,7 @@
 #endif
 
 #define RX_RING_BUF_SIZE (64U)
+#define CDC_STREAM_CHUNK_SIZE (4096U) /* 64 x 64B USB Packets, RM0368 19-bit DIEPTSIZx */
 static volatile uint8_t  g_rx_ring[RX_RING_BUF_SIZE];
 static volatile uint32_t g_rx_head = 0;
 static volatile uint32_t g_rx_tail = 0;
@@ -323,7 +324,7 @@ bool la_protocol_process_stream(void)
             break;
 
         case STREAM_PHASE_CHUNK1: {
-            uint16_t chunk = (len1 - g_stream_sent1 > 512U) ? 512U : (uint16_t)(len1 - g_stream_sent1);
+            uint16_t chunk = (len1 - g_stream_sent1 > CDC_STREAM_CHUNK_SIZE) ? CDC_STREAM_CHUNK_SIZE : (uint16_t)(len1 - g_stream_sent1);
             if (CDC_Transmit_FS((uint8_t*)&g_stream_payload[g_stream_write_pos + g_stream_sent1], chunk) == 0U) {
                 g_stream_sent1 += chunk;
                 if (g_stream_sent1 >= len1) {
@@ -334,7 +335,7 @@ bool la_protocol_process_stream(void)
         }
 
         case STREAM_PHASE_CHUNK2: {
-            uint16_t chunk = (len2 - g_stream_sent2 > 512U) ? 512U : (uint16_t)(len2 - g_stream_sent2);
+            uint16_t chunk = (len2 - g_stream_sent2 > CDC_STREAM_CHUNK_SIZE) ? CDC_STREAM_CHUNK_SIZE : (uint16_t)(len2 - g_stream_sent2);
             if (CDC_Transmit_FS((uint8_t*)&g_stream_payload[g_stream_sent2], chunk) == 0U) {
                 g_stream_sent2 += chunk;
                 if (g_stream_sent2 >= len2) {
