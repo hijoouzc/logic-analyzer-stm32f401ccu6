@@ -54,4 +54,7 @@ void la_core_on_systick_tick(void);
 /* Lấy trạng thái hiện tại của FSM */
 la_state_t la_core_get_state(void);
 
+/* Lấy chế độ trigger hiện tại (0x00 = Free-run, 0x01 = Rising, 0x02 = Falling) */
+uint8_t la_core_get_trig_mode(void);
+
 #endif /* INC_LA_CORE_H_ */

@@ -34,11 +34,16 @@ void la_testgen_init(void)
 void la_testgen_process(void)
 {
     /* 
-     * Chỉ phát xung test khi hệ thống ở IDLE hoặc WAIT_TRIGGER (cung cấp cạnh xung cho loopback sang PA0).
-     * Tuyệt đối khóa trong ARMED, PRE_SAMPLING, POST_SAMPLING và TRANSFERRING để giải phóng CPU 1.3 ms và bảo toàn chế độ nghỉ __WFI().
+     * Kênh phát xung test PA9 (USART1 TX):
+     * - Phát trong IDLE hoặc WAIT_TRIGGER (cung cấp xung trigger cho loopback PA0).
+     * - Trong Free-run (mode == 0x00): Cho phép phát trong PRE_SAMPLING để hỗ trợ loopback test Free-run.
+     * - Tuyệt đối khóa trong ARMED, POST_SAMPLING, TRANSFERRING và Edge-trigger PRE_SAMPLING để giải phóng CPU và bảo toàn __WFI().
      */
     la_state_t state = la_core_get_state();
-    if (state != LA_STATE_IDLE && state != LA_STATE_WAIT_TRIGGER) {
+    bool allow_tx = (state == LA_STATE_IDLE) ||
+                    (state == LA_STATE_WAIT_TRIGGER) ||
+                    (state == LA_STATE_PRE_SAMPLING && la_core_get_trig_mode() == 0x00);
+    if (!allow_tx) {
         return;
     }
 

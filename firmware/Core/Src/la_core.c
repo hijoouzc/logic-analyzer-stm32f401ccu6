@@ -130,6 +130,11 @@ la_state_t la_core_get_state(void)
     return g_la_state;
 }
 
+uint8_t la_core_get_trig_mode(void)
+{
+    return (g_current_trig_cfg & 0x0F);
+}
+
 bool la_core_start_capture(uint8_t rate_idx, uint8_t trig_cfg)
 {
     if (g_la_state != LA_STATE_IDLE) {
