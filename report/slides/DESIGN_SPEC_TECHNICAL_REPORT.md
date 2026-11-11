@@ -1,5 +1,5 @@
-# SLIDE DESIGN SPECIFICATION (8 SLIDES)
-**Topic:** Logic Analyzer 8-Channel 6 MHz (STM32F401CCU6 Development Board)  
+# SLIDE DESIGN SPECIFICATION (8 SLIDES) - HỆ THỐNG LOGIC ANALYZER 8 KÊNH 6 MHz
+**Topic:** Báo Cáo Kỹ Thuật Toàn Bộ Hệ Thống Logic Analyzer 8 Kênh 6 MHz (STM32F401CCU6 Development Board)  
 **Time Limit:** 260s (~4m20s) | **Template:** HUST Brand 16:9 (Red #C41230, White #FFFFFF)  
 **Target:** Clean Technical Presentation (Visual Diagrams, Structured Tables, Metric Cards, Zero Walls of Text)
 
@@ -27,23 +27,59 @@
 ## 1. TECHNICAL PARAMETERS (SINGLE SOURCE OF TRUTH)
 - **MCU Platform:** STM32F401CCU6 (84 MHz SYSCLK, APB1 42MHz, APB2 84MHz, USB FS 48MHz).
 - **Channels:** 8 digital channels mapped to `GPIOA->IDR` (PA0 – PA7).
-- **Sampling Engine:** TIM1 Update (`UDE=1`) triggers `DMA2_Stream5 Channel 6` in Circular mode into `la_capture_buffer[32768]` (32 KiB static buffer).
-- **Timer ARR:** 6 MHz (ARR=13, nominal configured), 2 MHz (ARR=41), 1 MHz (ARR=83).
-- **Post-Trigger Counter:** TIM2 One-Pulse Mode, ARR=26213 (counts 26,214 samples = 80% post-trigger).
-- **Trigger Alignment:** Buffer unrolling starts at `write_pos` (oldest sample); nominal trigger at `trig_offset = 6554`.
-- **Packet Format:** Frame 32,776 Bytes (7B Header + 32,768B Data + 1B Checksum XOR), streamed in 512B chunks over USB CDC.
-- **Verification Status:** Channel 0 verified via USART1 TX (PA9) loopback to PA0 at 115.2 kbps; 200V pulse and external I2C/SPI pending.
+- **Sampling Engine (Zero-CPU):** Sự kiện `TIM1 Update (UDE=1)` kích hoạt `DMA2_Stream5 Channel 6` ở chế độ Circular nạp vào `la_capture_buffer[32768]` (32 KiB SRAM tĩnh, căn lề 4 byte).
+- **Hardware Timer Cascade:** `TIM1 TRGO` kết nối nội bộ qua bus `ITR0` kích hoạt `TIM2 Slave Mode ExtClock1` (One-Pulse Mode), $ARR = 26213$ (đếm đúng 26.214 mẫu = 80% mảng sau trigger).
+- **Timer ARR Table:** 6 MHz (ARR=13), 3 MHz (ARR=27), 2 MHz (ARR=41), 1 MHz (ARR=83), 500 kHz (ARR=167), 200 kHz (ARR=419), 100 kHz (ARR=839), 50 kHz (ARR=1679), 10 kHz (ARR=8399).
+- **Trigger Alignment & Unrolling:** Đọc thanh ghi $write\_pos = (32768 - NDTR) \pmod{32768}$; xoay vòng mảng từ `write_pos` đưa điểm trigger danh định về cố định tại $t_{6554}$ (đúng 20% bộ đệm).
+- **Packet Format:** Khung 32.776 Bytes (7B Header + 32.768B Data + 1B Checksum XOR), phân đoạn truyền tối đa 512B/khối qua USB CDC kèm Watchdog 100 ms chống treo MCU.
+- **Verification Status:** Đã kiểm chứng 100% trên kit thật WeAct Black Pill (Ping/Pong, Khung 32.776B, Loopback UART 115.2 kbps trên Ch0, Bắt trigger 6554 không jitter); đo tải 6 MHz và xung 200V thuộc mốc tiếp theo.
 
 ---
 
-## 2. SLIDE-BY-SLIDE SPECIFICATIONS
+## 2. KIẾN TRÚC FIRMWARE & LUỒNG THỰC THI CODE CHI TIẾT (FIRMWARE ARCHITECTURE & CODE FLOW)
+
+### 2.1. 6 Phương pháp & Kỹ thuật Thiết kế Cốt lõi
+1. **Zero-CPU Hardware Cascade:** TIM1 (Master) $\rightarrow$ DMA2 Stream 5 bốc byte trực tiếp từ `GPIOA->IDR` vào SRAM; TIM1 TRGO $\rightarrow$ ITR0 $\rightarrow$ TIM2 (Slave One-Pulse) đếm 80% mẫu sau trigger. CPU hoàn toàn rảnh rỗi trong toàn bộ quá trình lấy mẫu.
+2. **Event-Driven FSM (6 Trạng thái):** `IDLE` $\rightarrow$ `ARMED` $\rightarrow$ `PRE_SAMPLING` $\rightarrow$ `WAIT_TRIGGER` $\rightarrow$ `POST_SAMPLING` $\rightarrow$ `TRANSFERRING`.
+3. **Bảo toàn Pre-trigger 20%:** Trong `PRE_SAMPLING`, ngắt EXTI bị khóa chặt (`EXTI->IMR &= ~0x00FF`). Chỉ khi cờ DMA Half-Transfer (`HTIF5`) bật (đã ghi được 50% = 16.384 mẫu $\ge$ 6.554 mẫu), firmware mới unmask EXTI để bắt trigger, loại trừ 100% nguy cơ rỗng bộ đệm quá khứ.
+4. **Kỷ luật Thời gian thực & Phân cấp NVIC:**
+   - `Priority 0` (Cao nhất): `EXTI0..EXTI9_5` — Bắt cạnh xung tức thì, trễ vào ngắt cực thấp (< 15 clock cycles).
+   - `Priority 1`: `TIM2_IRQHandler` — Dừng lấy mẫu chính xác tại mẫu thứ 26.214 sau trigger.
+   - `Priority 2`: `OTG_FS_IRQHandler` — Xử lý giao tiếp USB.
+   - Kỷ luật ISR: < 30 dòng code, non-blocking, cấm `printf`/delay, sử dụng biến `volatile`.
+5. **Thuật toán Duỗi mảng (NDTR Unrolling Math):**
+   - Đọc con trỏ dừng: $write\_pos = (32768 - NDTR) \pmod{32768}$.
+   - Chặng 1: Truyền từ $write\_pos \rightarrow 32767$ (đưa mẫu cũ nhất về thời điểm $t_0$).
+   - Chặng 2: Truyền tiếp từ $0 \rightarrow write\_pos - 1$ (đưa mẫu mới nhất về $t_{32767}$).
+   - Điểm trigger luôn nằm tại vị trí danh định cố định $t_{6554}$ (20% bộ đệm).
+6. **Streaming Watchdog & Ring Buffer:**
+   - Nhận lệnh qua Ring Buffer 64B bằng thuật toán cửa sổ trượt (Sliding Window) 5B có XOR Checksum.
+   - Truyền phân đoạn tối đa 512B/khối; hàm `wait_cdc_tx_ready()` có timeout bảo vệ 100 ms chống treo hệ thống nếu PC rút cáp hoặc ngắt ứng dụng.
+
+### 2.2. Luồng Thực thi Từng Bước của Code (End-to-End Flow)
+```text
+[BƯỚC 1: INIT] ──────► [BƯỚC 2: RX LỆNH] ──────► [BƯỚC 3: PRE-SAMPLING]
+la_core_init()         la_protocol_process()     TIM1 nhịp, DMA2 ghi vòng
+PUPDR pull-down        Sliding window 5B         EXTI MASKED (chống rỗng)
+NVIC Priority 0..2     XOR Checksum kiểm tra     Chờ cờ DMA HTIF5
+                                                        │
+                                                        ▼
+[BƯỚC 6: UNROLL & USB] ◄── [BƯỚC 5: TIM2 DỪNG] ◄── [BƯỚC 4: BẮT TRIGGER]
+la_protocol_send_data()    TIM2 tràn 26.214 mẫu    EXTI ISR kích TIM2 CEN
+Duỗi mảng 2 chặng          Dừng TIM1 & DMA2        Khóa ngay EXTI IMR
+USB chunk 512B + WDT 100ms Chốt write_pos = 32K-NDTR FSM -> POST_SAMPLING
+```
+
+---
+
+## 3. SLIDE-BY-SLIDE SPECIFICATIONS
 
 ### Slide 1: Cover (HUST Title Slide)
 - **Layout:** Full-width Title layout with official HUST Logo crest.
-- **Main Title:** BÁO CÁO TIẾN ĐỘ ĐỀ TÀI 1: THIẾT KẾ & XÂY DỰNG LOGIC ANALYZER 8 KÊNH
-- **Metadata:** Học phần: Hệ thống nhúng & Thiết kế giao tiếp nhúng (2026.1) | Nền tảng: STM32F401CCU6 Development Board | 11/11/2026
+- **Main Title:** BÁO CÁO KỸ THUẬT ĐỀ TÀI 1: THIẾT KẾ & XÂY DỰNG LOGIC ANALYZER 8 KÊNH
+- **Metadata:** Học phần: Hệ thống nhúng & Thiết kế giao tiếp nhúng (2026.1) | Nền tảng: STM32F401CCU6 Development Board | 2026
 - **Speaker Notes (30s):**
-  > "Kính thưa thầy và các bạn, hôm nay đại diện cho nhóm, em xin báo cáo tiến độ Đề tài 1: Thiết kế và xây dựng thiết bị Logic Analyzer 8 kênh trên nền tảng vi điều khiển STM32F401CCU6. Sau đây, em xin phép bắt đầu phần trình bày về mục tiêu và tiến độ triển khai thực tế của nhóm."
+  > "Kính thưa thầy và các bạn, hôm nay đại diện cho nhóm, em xin báo cáo kỹ thuật toàn bộ hệ thống Đề tài 1: Thiết kế và xây dựng thiết bị Logic Analyzer 8 kênh trên nền tảng vi điều khiển STM32F401CCU6. Sau đây, em xin phép bắt đầu phần trình bày về kiến trúc và các giải pháp kỹ thuật đã triển khai thực tế của nhóm."
 
 ### Slide 2: 01 · Tổng quan Đề tài & Chỉ tiêu Thiết kế (35s)
 - **Visual Structure:** 3 Big Metric Callout Cards on top + 40:60 Split Layout below.
