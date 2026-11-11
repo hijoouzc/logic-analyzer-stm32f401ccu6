@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """software/tests/test_auto_repeat.py
 Kiểm thử tự động Chế độ Auto-Repeat / Repeat Run (Giai đoạn 1):
-1. Kiểm tra khởi tạo và chuyển đổi chế độ Single Shot [1x] <-> Auto-Repeat [🔁] (F6, nút Rail, Combobox).
+1. Kiểm tra khởi tạo và chuyển đổi chế độ Single Shot [1x] <-> Auto-Repeat [↻] (F6, nút Rail, Combobox).
 2. Kiểm tra chu trình Auto-Repeat chạy liên tục trong Offline Mock mode (Frame counter tăng, Pause/Freeze frame).
 3. Kiểm tra chu trình Auto-Repeat với cổng ảo serial giả lập STM32 (kết nối, nhận dữ liệu liên tục, Pause/Stop an toàn).
 4. Kiểm tra phím tắt Space (Play/Pause) và F6 (Toggle mode).
@@ -96,7 +96,7 @@ def run_auto_repeat_test():
     # Chuyển đổi bằng nút trên Rail
     win._toggle_capture_mode()
     assert win.repeat_mode is True
-    assert win.btn_rail_mode.text() == "🔁"
+    assert win.btn_rail_mode.text() == "↻"
     assert win.combo_capture_mode.currentIndex() == 1
     assert "Auto-Repeat" in win.btn_rail_start.toolTip()
     print("-> [PASS] Chuyển sang Auto-Repeat thành công qua nút Activity Rail!")
@@ -111,7 +111,7 @@ def run_auto_repeat_test():
     event_f6 = QtGui.QKeyEvent(QtCore.QEvent.KeyPress, QtCore.Qt.Key_F6, QtCore.Qt.NoModifier)
     win.keyPressEvent(event_f6)
     assert win.repeat_mode is True
-    assert win.btn_rail_mode.text() == "🔁"
+    assert win.btn_rail_mode.text() == "↻"
     print("-> [PASS] Phím tắt F6 chuyển đổi chế độ mượt mà!")
 
     # -------------------------------------------------------------------------

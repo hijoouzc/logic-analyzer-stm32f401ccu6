@@ -298,7 +298,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
         act_toggle_mode = QtWidgets.QAction("Toggle &Single / Repeat Mode", self)
         act_toggle_mode.setShortcut("F6")
-        act_toggle_mode.setStatusTip("Switch between Single Shot [1x] and Auto-Repeat Continuous Run [🔁]")
+        act_toggle_mode.setStatusTip("Switch between Single Shot [1x] and Auto-Repeat Continuous Run [↻]")
         act_toggle_mode.triggered.connect(self._toggle_capture_mode)
         menu_capture.addAction(act_toggle_mode)
 
@@ -620,7 +620,7 @@ class MainWindow(QtWidgets.QMainWindow):
         lbl_cap_mode.setStyleSheet(f"color: {T.TEXT_DIM};")
         self.combo_capture_mode = QtWidgets.QComboBox()
         self.combo_capture_mode.addItem("Single Shot (1x)", "single")
-        self.combo_capture_mode.addItem("Auto-Repeat (Run) 🔁", "repeat")
+        self.combo_capture_mode.addItem("Auto-Repeat (Run) ↻", "repeat")
         self.combo_capture_mode.currentIndexChanged.connect(self._on_capture_combo_changed)
         h_cap_mode.addWidget(lbl_cap_mode)
         h_cap_mode.addWidget(self.combo_capture_mode, 1)
@@ -903,10 +903,10 @@ class MainWindow(QtWidgets.QMainWindow):
         self.btn_rail_start.clicked.connect(self._on_start_or_abort)
         v_layout.addWidget(self.btn_rail_start, 0, QtCore.Qt.AlignHCenter)
 
-        # Nút chuyển đổi nhanh Single Shot / Auto-Repeat 🔁
+        # Nút chuyển đổi nhanh Single Shot / Auto-Repeat ↻
         self.btn_rail_mode = QtWidgets.QPushButton("1x")
         self.btn_rail_mode.setObjectName("railModeButton")
-        self.btn_rail_mode.setToolTip("Capture Mode: Single Shot [1x] / Auto-Repeat [🔁] (F6)")
+        self.btn_rail_mode.setToolTip("Capture Mode: Single Shot [1x] / Auto-Repeat [↻] (F6)")
         self.btn_rail_mode.setFixedSize(36, 18)
         self.btn_rail_mode.setCursor(QtCore.Qt.PointingHandCursor)
         self.btn_rail_mode.clicked.connect(self._toggle_capture_mode)
@@ -1110,7 +1110,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 self._on_start_capture()
 
     def _toggle_capture_mode(self):
-        """Chuyển đổi giữa chế độ Single Shot [1x] và Auto-Repeat Run [🔁]."""
+        """Chuyển đổi giữa chế độ Single Shot [1x] và Auto-Repeat Run [↻]."""
         self.repeat_mode = not self.repeat_mode
         if not self.repeat_mode and self.repeat_running:
             self._stop_repeat()
@@ -1134,7 +1134,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
         if hasattr(self, "btn_rail_mode"):
             if is_repeat:
-                self.btn_rail_mode.setText("🔁")
+                self.btn_rail_mode.setText("↻")
                 self.btn_rail_mode.setToolTip("Capture Mode: Auto-Repeat Run (Click to switch to Single Shot 1x) [F6]")
                 self.btn_rail_mode.setStyleSheet("""
                     QPushButton#railModeButton {
@@ -1142,7 +1142,7 @@ class MainWindow(QtWidgets.QMainWindow):
                         border: 1px solid #00994d;
                         border-radius: 9px;
                         color: #58c667;
-                        font-size: 11px;
+                        font-size: 13px;
                         font-weight: bold;
                         padding: 0px;
                     }
@@ -1152,7 +1152,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 """)
             else:
                 self.btn_rail_mode.setText("1x")
-                self.btn_rail_mode.setToolTip("Capture Mode: Single Shot (Click to switch to Auto-Repeat 🔁) [F6]")
+                self.btn_rail_mode.setToolTip("Capture Mode: Single Shot (Click to switch to Auto-Repeat ↻) [F6]")
                 self.btn_rail_mode.setStyleSheet("""
                     QPushButton#railModeButton {
                         background-color: #2c2c2e;

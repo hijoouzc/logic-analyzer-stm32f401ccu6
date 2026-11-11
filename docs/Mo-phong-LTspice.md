@@ -12,7 +12,7 @@ MẠCH BẢO VỆ ĐẦU VÀO LOGIC ANALYZER**
 | Điện trở nối tiếp | R1 = 1 kΩ |
 | Diode bảo vệ | Hai diode BAT54S (U1, U2) theo sơ đồ đang mô phỏng |
 | Tụ tại nút bảo vệ | C1 = 22 pF |
-| Nguồn tham chiếu/kẹp | V2 = 3,3 V; mạch Zener D1 và tụ C2 = 10 µF theo sơ đồ |
+| Mô hình nguồn/kẹp | Rail 3,3 V phải được mô hình bằng LDO có giới hạn dòng, tải tương đương và tụ đầu ra; Zener/shunt là phần tử kẹp riêng |
 | Nút quan sát | Vin (đầu vào), N\_PROTECT (sau mạng bảo vệ), Vout (đầu ra logic mô hình) |
 | Mô hình Vout | B1: V = if(V(N\_PROTECT) > 1.65, 3.3, 0) |
 
@@ -24,9 +24,9 @@ Trong giai đoạn này, mô phỏng được thực hiện trên một kênh. S
 
 # 2. Cấu hình mạch mô phỏng một kênh
 
-Cấu trúc mô phỏng đang sử dụng: nguồn Vin → điện trở nối tiếp R1 → nút N\_PROTECT. Nút N\_PROTECT được nối với mạng diode BAT54S và tụ C1 xuống GND. Đầu ra Vout được tạo bởi nguồn hành vi B1 để biểu diễn ngưỡng logic 1,65 V: nếu N\_PROTECT lớn hơn 1,65 V thì Vout bằng 3,3 V; ngược lại Vout bằng 0 V.
+Cấu trúc mô phỏng đang sử dụng: nguồn Vin → điện trở nối tiếp R1 → nút N\_PROTECT. Nút N\_PROTECT được nối với mạng diode BAT54S và tụ C1 xuống GND; diode kẹp dương nối về rail 3,3 V phải được tính cả dòng bơm vào rail. Đầu ra Vout được tạo bởi nguồn hành vi B1 để biểu diễn ngưỡng logic 1,65 V: nếu N\_PROTECT lớn hơn 1,65 V thì Vout bằng 3,3 V; ngược lại Vout bằng 0 V.
 
-Lưu ý: B1 là mô hình chuyển mức logic phục vụ quan sát trong LTspice, không phải linh kiện đệm vật lý. Khi hoàn thiện thiết kế phần cứng, cần thay/đối chiếu với đặc tính đầu vào thực tế của IC đệm 74LVC245 và tải đầu vào của STM32. ![](data:image/png;base64...)
+Lưu ý: B1 là mô hình chuyển mức logic phục vụ quan sát trong LTspice, không phải linh kiện đệm vật lý. Nguồn 3,3 V lý tưởng hoặc nguồn áp cố định chỉ giúp kiểm tra đường tín hiệu, không chứng minh rail nguồn thực tế an toàn. LDO hoạt động như một bộ điều khiển nguồn: mạch hồi tiếp tăng hoặc giảm dòng qua transistor công suất để giữ Vout gần giá trị đặt khi còn đủ biên áp và chưa vượt giới hạn dòng/nhiệt. LDO thông thường chỉ **cấp** dòng, không có nhiệm vụ **hút** dòng từ đầu ra. Vì vậy, khi dòng từ diode kẹp bị bơm ngược vào rail lớn hơn dòng tải, rail 3,3 V có thể tăng áp; LDO không tự động “vặn nhỏ” hay xả phần dư đó. Cần mô hình hóa tải, giới hạn dòng, điện trở đầu ra, dòng ngược cho phép và một nhánh shunt/TVS/active clamp phù hợp trước khi kết luận an toàn. Khi hoàn thiện thiết kế phần cứng, cần đối chiếu với datasheet của LDO, BAT54S, phần tử shunt, 74LVC245 và tải STM32. ![](data:image/png;base64...)
 
 # 3. Thông số bốn kịch bản kiểm thử
 
@@ -113,7 +113,7 @@ Lưu ý quan trọng: Cấu hình PULSE(0 -30 1m 1u 1u 1m 3m) trong ảnh thể 
 | Độ trễ | Đo thời gian từ cạnh Vin đến khi N\_PROTECT/Vout vượt ngưỡng logic. |
 | Mất xung / sai chu kỳ | Ở 1 MHz, xác nhận tất cả chu kỳ đầu vào đều xuất hiện ở đầu ra, chu kỳ đầu ra vẫn xấp xỉ 1 µs. |
 | Dòng và công suất linh kiện | Đo dòng qua R1/diode và công suất tức thời, năng lượng xung; đối chiếu giới hạn datasheet. |
-| Ảnh hưởng nguồn 3,3 V | Theo dõi rail 3,3 V khi có quá áp; bảo đảm rail không bị nâng vượt giới hạn do dòng kẹp dồn vào nguồn. |
+| Ảnh hưởng nguồn 3,3 V | Theo dõi cả điện áp rail, dòng tải, dòng bơm ngược từ diode và công suất phần tử shunt; không được giả định LDO tự hấp thụ dòng dư. |
 
 # 5. Cách đo và trình bày kết quả
 
@@ -127,7 +127,9 @@ Lưu ý quan trọng: Cấu hình PULSE(0 -30 1m 1u 1u 1m 3m) trong ảnh thể 
 
 * Các kết quả trên chỉ xác nhận mạch theo mô hình linh kiện đang khai báo trong LTspice. Cần dùng đúng model SPICE/datasheet của BAT54S và Zener/TVS thực tế.
 * Mô hình B1 với ngưỡng 1,65 V tạo ra đầu ra logic lý tưởng, không mô phỏng đầy đủ độ trễ, dòng vào, điện dung và giới hạn điện áp của 74LVC245.
-* Ở kịch bản quá áp, cần theo dõi thêm dòng qua diode, công suất trên R1, điện áp rail 3,3 V và dòng mà nguồn 3,3 V phải hấp thụ. Chỉ nhìn thấy N\_PROTECT được kẹp không đủ chứng minh toàn bộ mạch an toàn.
+* Mô hình nguồn 3,3 V hiện tại chỉ có giá trị kết luận nếu đã thay nguồn áp lý tưởng bằng mô hình LDO có giới hạn dòng/biên áp, tải MCU và tụ đầu ra hợp lý. LDO giống một van điều tiết dòng cấp ra: tải cần nhiều thì mở thêm trong giới hạn cho phép, tải giảm thì giảm dòng; nó không phải tải xả và không tự hút dòng khi năng lượng bị bơm ngược vào đầu ra.
+* Khi dòng kẹp đi vào rail lớn hơn dòng tải, phần dư có thể nạp tụ làm điện áp rail tăng. Nếu LDO không có bảo vệ dòng ngược, điện áp này còn có thể đi ngược vào chân OUT/IN và gây hư hỏng. Phải bổ sung nhánh shunt/TVS/active clamp hoặc đường xả được tính toán, rồi kiểm tra điện áp cực đại, dòng và công suất theo datasheet.
+* Ở kịch bản quá áp, cần theo dõi thêm dòng qua diode, công suất trên R1, điện áp rail 3,3 V, dòng tải, dòng bơm ngược và công suất phần tử kẹp. Chỉ nhìn thấy N\_PROTECT được kẹp không đủ chứng minh toàn bộ mạch an toàn.
 * Thông số xung ±30 V cần được kiểm chứng riêng cho cả cực dương và cực âm. Ảnh cấu hình xung âm không đại diện cho phép thử xung dương.
 * Sau khi kiểm chứng một kênh, nhân bản thành 8 nhánh độc lập. Để kiểm tra đồng thời 8 kênh, có thể cấp cùng dạng sóng cho cả 8 đầu vào và so sánh các nút N\_PROTECT1…N\_PROTECT8, Vout1…Vout8. Nguồn 3,3 V/GND dùng chung, nhưng không nối chung các nút tín hiệu giữa các kênh.
 
