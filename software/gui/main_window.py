@@ -199,6 +199,9 @@ class MainWindow(QtWidgets.QMainWindow):
         self.waveform.sigXRangeChanged.connect(self._on_x_range_changed)
         # Kết nối tín hiệu điều hướng 2 chiều: Ctrl+Click vào bubble trên sóng -> cuộn bảng Data Table
         self.waveform.sigBubbleCtrlClicked.connect(self._on_bubble_ctrl_clicked)
+        # Kết nối tín hiệu Quick Measure Tool & Point Inspector Hover Timestamp
+        self.waveform.sigQuickMeasureState.connect(self._on_quick_measure_state)
+        self.waveform.sigHoverTimestamp.connect(self._on_hover_timestamp)
 
         # Backward compatibility aliases
         self.plot_widget = self.waveform.plot_widget
@@ -319,19 +322,25 @@ class MainWindow(QtWidgets.QMainWindow):
         menu_measure = menubar.addMenu("&Measure")
         act_toggle_cursors = QtWidgets.QAction("Toggle &Timing Cursors (A & B)", self)
         act_toggle_cursors.setShortcut("C")
-        act_toggle_cursors.setStatusTip("Show/hide timing cursors A & B with delta measurement")
+        act_toggle_cursors.setStatusTip("Show/hide timing cursors A & B with delta measurement (C)")
         act_toggle_cursors.triggered.connect(self._toggle_cursors)
         menu_measure.addAction(act_toggle_cursors)
 
+        act_quick_measure = QtWidgets.QAction("Quick &Measure Tool (|↔|)", self)
+        act_quick_measure.setShortcut("M")
+        act_quick_measure.setStatusTip("Measure delta time between two clicked points with edge snap (M)")
+        act_quick_measure.triggered.connect(self._toggle_quick_measure)
+        menu_measure.addAction(act_quick_measure)
+
         act_meas = QtWidgets.QAction("&Automated Channel Measurements", self)
-        act_meas.setShortcut("M")
-        act_meas.setStatusTip("Toggle Automated Channel Measurements panel")
+        act_meas.setShortcut("Alt+M")
+        act_meas.setStatusTip("Toggle Automated Channel Measurements panel (Alt+M)")
         act_meas.triggered.connect(self._toggle_measurements_card)
         menu_measure.addAction(act_meas)
 
         act_autodetect = QtWidgets.QAction("⚡ &Auto-Detect Active Channel", self)
         act_autodetect.setShortcut("Ctrl+M")
-        act_autodetect.setStatusTip("Auto-scan all channels and measure the one with active transitions")
+        act_autodetect.setStatusTip("Auto-scan all channels and measure the one with active transitions (Ctrl+M)")
         act_autodetect.triggered.connect(self._on_meas_autodetect)
         menu_measure.addAction(act_autodetect)
 
@@ -933,11 +942,19 @@ class MainWindow(QtWidgets.QMainWindow):
 
         self.btn_sw_measurements = self._create_switcher_button(
             icon_text="f(t)",
-            tooltip="Measurements (M)",
+            tooltip="Measurements (Alt+M)",
             callback=self._toggle_measurements_card
         )
         self.slot_measurements = RailSwitcherSlot(self.btn_sw_measurements)
         v_layout.addWidget(self.slot_measurements, 0, QtCore.Qt.AlignHCenter)
+
+        self.btn_sw_quick_measure = self._create_switcher_button(
+            icon_text="|↔|",
+            tooltip="Quick Measure Tool (M)",
+            callback=self._toggle_quick_measure
+        )
+        self.slot_quick_measure = RailSwitcherSlot(self.btn_sw_quick_measure)
+        v_layout.addWidget(self.slot_quick_measure, 0, QtCore.Qt.AlignHCenter)
 
         self.btn_sw_cursors = self._create_switcher_button(
             icon_text="❙❙",
@@ -985,6 +1002,32 @@ class MainWindow(QtWidgets.QMainWindow):
         self.waveform.toggle_cursors()
         self._update_switcher_styles()
 
+    def _toggle_quick_measure(self):
+        """Bật/tắt công cụ đo nhanh Quick Measure Tool (phím M hoặc nút |↔|)."""
+        if hasattr(self, "waveform"):
+            self.waveform.toggle_quick_measure()
+            self._update_switcher_styles()
+
+    def _on_quick_measure_state(self, active: bool, msg: str):
+        """Xử lý thay đổi trạng thái từ Quick Measure Tool trên Waveform."""
+        if active:
+            self.lbl_status.setText(f"|↔| {msg}")
+            self.lbl_status.setStyleSheet(f"color: {T.ACCENT_START}; font-weight: bold; font-size: 12px;")
+        else:
+            if msg:
+                self.lbl_status.setText(f"|↔| {msg}")
+                self.lbl_status.setStyleSheet("color: #58c667; font-size: 12px;")
+            else:
+                self.lbl_status.setStyleSheet(f"color: {T.TEXT_DIM}; font-size: 12px;")
+        self._update_switcher_styles()
+
+    def _on_hover_timestamp(self, t: float, sample_idx: int, raw_val: int):
+        """Cập nhật tọa độ thời gian và mẫu khi rê chuột trên sóng (Point Inspector)."""
+        if hasattr(self, "lbl_hover_info"):
+            t_str = format_si_time(t)
+            sign = "+" if t >= 0 else ""
+            self.lbl_hover_info.setText(f"T: {sign}{t_str} | #{sample_idx} | 0x{raw_val:02X}")
+
     def _toggle_drawer_panel(self):
         """Bật/tắt Drawer Panel bên phải."""
         self.drawer_open = not getattr(self, "drawer_open", True)
@@ -1001,6 +1044,7 @@ class MainWindow(QtWidgets.QMainWindow):
         trigger_active = drawer_visible and hasattr(self, "trigger_body") and self.trigger_body.isVisible()
         measurements_active = drawer_visible and hasattr(self, "card_measurements") and self.card_measurements.isVisible()
         analyzers_active = drawer_visible
+        quick_measure_active = hasattr(self, "waveform") and getattr(self.waveform, "quick_measure_active", False)
 
         if hasattr(self, "btn_sw_analyzers"):
             self._apply_switcher_style(self.btn_sw_analyzers, selected=analyzers_active)
@@ -1008,6 +1052,8 @@ class MainWindow(QtWidgets.QMainWindow):
             self._apply_switcher_style(self.btn_sw_trigger, selected=trigger_active)
         if hasattr(self, "btn_sw_measurements"):
             self._apply_switcher_style(self.btn_sw_measurements, selected=measurements_active)
+        if hasattr(self, "btn_sw_quick_measure"):
+            self._apply_switcher_style(self.btn_sw_quick_measure, selected=quick_measure_active)
         if hasattr(self, "btn_sw_cursors"):
             self._apply_switcher_style(self.btn_sw_cursors, selected=cursors_visible)
         if hasattr(self, "btn_sw_export"):
@@ -1202,12 +1248,22 @@ class MainWindow(QtWidgets.QMainWindow):
         self._on_start_capture()
 
     def keyPressEvent(self, event):
-        """Xử lý phím tắt Space (Play/Pause) và F6 (Toggle Single/Repeat)."""
-        if event.key() == QtCore.Qt.Key_Space:
+        """Xử lý phím tắt Space (Play/Pause), F6 (Toggle Single/Repeat), M (Quick Measure), Esc (Cancel/Abort)."""
+        if event.key() == QtCore.Qt.Key_Escape:
+            if hasattr(self, "waveform") and getattr(self.waveform, "quick_measure_active", False):
+                self.waveform.cancel_quick_measure()
+                return
+            if getattr(self, "repeat_running", False) or getattr(self, "is_capturing", False):
+                self._on_start_or_abort()
+                return
+        elif event.key() == QtCore.Qt.Key_Space:
             self._on_start_or_abort()
             return
         elif event.key() == QtCore.Qt.Key_F6:
             self._toggle_capture_mode()
+            return
+        elif event.key() == QtCore.Qt.Key_M and not (event.modifiers() & (QtCore.Qt.ControlModifier | QtCore.Qt.AltModifier)):
+            self._toggle_quick_measure()
             return
         super().keyPressEvent(event)
 
@@ -1304,6 +1360,11 @@ class MainWindow(QtWidgets.QMainWindow):
         h_layout.addWidget(self.lbl_status)
 
         h_layout.addStretch(1)
+
+        # Điểm soi thời gian đơn điểm (Point Inspector Hover Timestamp)
+        self.lbl_hover_info = QtWidgets.QLabel("")
+        self.lbl_hover_info.setStyleSheet(f"color: {T.TEXT_DIM}; font-family: 'Roboto Mono', 'DejaVu Sans Mono', monospace; font-size: 11px;")
+        h_layout.addWidget(self.lbl_hover_info)
 
         # Mức thu phóng ở góc phải (@mixin dataRegular: 'Roboto Mono', 11px)
         self.lbl_zoom = QtWidgets.QLabel("128 µs ⌃")
@@ -1862,6 +1923,9 @@ class MainWindow(QtWidgets.QMainWindow):
         ch = self.combo_meas_ch.currentIndex()
         if ch < 0 or ch >= len(self.current_data["channels"]):
             return
+
+        if hasattr(self, "waveform"):
+            self.waveform.active_inspect_channel = ch
 
         samples = self.current_data["channels"][ch]
         fs = float(self.current_data.get("sample_rate", 1_000_000.0))

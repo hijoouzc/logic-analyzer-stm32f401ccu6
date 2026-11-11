@@ -475,6 +475,8 @@ class WaveformWidget(QtWidgets.QWidget):
     sigCursorChanged = QtCore.pyqtSignal(float, float, float)  # t_a, t_b, dt
     sigXRangeChanged = QtCore.pyqtSignal(float, float)        # x_min, x_max
     sigBubbleCtrlClicked = QtCore.pyqtSignal(int, dict)        # (frame_idx, frame_dict)
+    sigQuickMeasureState = QtCore.pyqtSignal(bool, str)        # (active, prompt_message)
+    sigHoverTimestamp = QtCore.pyqtSignal(float, int, int)     # (t_sec, sample_idx, raw_byte_val)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -485,6 +487,21 @@ class WaveformWidget(QtWidgets.QWidget):
         self.row_h = T.CHANNEL_ROW_HEIGHT
         self.dec_scale = T.DECODER_ROW_SCALE
         self.row_heights: List[int] = [int(self.row_h * self.dec_scale)] + [self.row_h] * 7
+
+        # Hệ thống Magnetic Snap-to-Edge & Quick Measure Tool (chuẩn UI_SPEC.md Mục 7)
+        self.snap_enabled: bool = True
+        self.snap_radius_px: float = 15.0
+        self.channel_edges: Dict[int, np.ndarray] = {i: np.array([], dtype=np.float64) for i in range(8)}
+        self.all_edges: np.ndarray = np.array([], dtype=np.float64)
+        self.current_time_axis: Optional[np.ndarray] = None
+        self.hovered_channel: int = -1
+        self.active_inspect_channel: int = 0
+        self._is_snapping: bool = False
+
+        # Trạng thái Quick Measure Tool (2-Click Measurement)
+        self.quick_measure_active: bool = False
+        self.quick_measure_step: int = 0  # 0: Idle, 1: Waiting A click, 2: Waiting B click
+        self.quick_measure_t1: float = 0.0
 
         # Lưu trữ frame UART phục vụ cơ chế chuyển đổi MultiBubble <-> SingleBubble khi Zoom
         self._uart_frames: List[Dict[str, Any]] = []
@@ -761,8 +778,41 @@ class WaveformWidget(QtWidgets.QWidget):
         self.cursor_span_text.setZValue(26)
         self.vb.addItem(self.cursor_span_text, ignoreBounds=True)
 
-        self.cursor_a.sigPositionChanged.connect(self._on_cursor_moved)
-        self.cursor_b.sigPositionChanged.connect(self._on_cursor_moved)
+        # Chấm tròn chỉ thị nam châm hút sườn xung (Snap Indicator Dot Ø 8px) (zValue 30)
+        self.snap_dot = pg.ScatterPlotItem(
+            size=8,
+            pen=pg.mkPen(color=T.CURSOR_A, width=2.0),
+            brush=pg.mkBrush("#ffffff"),
+            hoverable=False
+        )
+        self.snap_dot.setZValue(30)
+        self.vb.addItem(self.snap_dot, ignoreBounds=True)
+        self.snap_dot.hide()
+
+        # Đường xem trước khoảng cách đo nhanh Quick Measure (zValue 28)
+        self.preview_measure_line = pg.PlotCurveItem(
+            pen=pg.mkPen(color=QtGui.QColor(T.ACCENT_START), width=1.8, style=QtCore.Qt.DashLine)
+        )
+        self.preview_measure_line.setZValue(28)
+        self.vb.addItem(self.preview_measure_line, ignoreBounds=True)
+        self.preview_measure_line.hide()
+
+        # Nhãn xem trước thông số đo nhanh bám theo trỏ chuột (zValue 29)
+        self.preview_measure_text = pg.TextItem(text="", color="#ffffff", anchor=(0.5, 1.2))
+        self.preview_measure_text.setFont(QtGui.QFont("Roboto Mono", 9, QtGui.QFont.Bold))
+        self.preview_measure_text.setZValue(29)
+        self.vb.addItem(self.preview_measure_text, ignoreBounds=True)
+        self.preview_measure_text.hide()
+
+        # Kết nối sự kiện di chuyển và thả thước đo A & B (kèm Magnetic Snap)
+        self.cursor_a.sigPositionChanged.connect(lambda: self._on_cursor_dragged(self.cursor_a))
+        self.cursor_b.sigPositionChanged.connect(lambda: self._on_cursor_dragged(self.cursor_b))
+        self.cursor_a.sigPositionChangeFinished.connect(lambda: self._on_cursor_drag_finished(self.cursor_a))
+        self.cursor_b.sigPositionChangeFinished.connect(lambda: self._on_cursor_drag_finished(self.cursor_b))
+
+        # Kết nối sự kiện chuột Scene cho Magnetic Snap, Live Measure Preview & Point Inspector
+        self.plot_widget.scene().sigMouseMoved.connect(self._on_scene_mouse_moved)
+        self.plot_widget.scene().sigMouseClicked.connect(self._on_scene_mouse_clicked)
 
         main_layout.addWidget(self.plot_widget, 1)
 
@@ -1090,6 +1140,41 @@ class WaveformWidget(QtWidgets.QWidget):
         self.hud.setVisible(visible)
         self._update_cursor_span_visibility()
 
+    def _on_cursor_dragged(self, cursor: pg.InfiniteLine):
+        """Xử lý kéo thước đo A hoặc B kèm cơ chế Magnetic Snap-to-Edge chuẩn UI_SPEC Mục 7.1."""
+        if self._is_snapping:
+            return
+
+        t_val = cursor.value()
+        if self.snap_enabled and self.current_data is not None:
+            t_snap, ch, _ = self.find_closest_edge(
+                t_val,
+                preferred_ch=self.hovered_channel if self.hovered_channel >= 0 else None,
+                max_px=self.snap_radius_px
+            )
+            if t_snap is not None:
+                self._is_snapping = True
+                cursor.setValue(t_snap)
+                self._is_snapping = False
+
+                # Hiển thị Snap Indicator Dot Ø 8px tại giao điểm sườn xung
+                y_mid = self.get_channel_mid_y(ch if ch is not None else (self.hovered_channel if self.hovered_channel >= 0 else 0))
+                pen_color = T.CURSOR_A if cursor == self.cursor_a else T.CURSOR_B
+                self.snap_dot.setData(
+                    pos=[[t_snap, y_mid]],
+                    pen=pg.mkPen(color=pen_color, width=2.0),
+                    brush=pg.mkBrush("#ffffff")
+                )
+                self.snap_dot.show()
+            else:
+                self.snap_dot.hide()
+
+        self._update_hud()
+
+    def _on_cursor_drag_finished(self, cursor: pg.InfiniteLine):
+        """Ẩn nhẹ chấm snap dot sau khi kết thúc kéo thả thước đo."""
+        QtCore.QTimer.singleShot(400, self.snap_dot.hide)
+
     def _on_cursor_moved(self):
         self._update_hud()
 
@@ -1115,8 +1200,11 @@ class WaveformWidget(QtWidgets.QWidget):
         self.sigCursorChanged.emit(t_a, t_b, dt)
 
     def set_cursor_positions(self, t_a: float, t_b: float):
+        """Đặt vị trí Cursor A và Cursor B theo chương trình (không bị can thiệp bởi snap)."""
+        self._is_snapping = True
         self.cursor_a.setValue(t_a)
         self.cursor_b.setValue(t_b)
+        self._is_snapping = False
         self._update_hud()
 
     def set_positions(self, t_a: float, t_b: float):
@@ -1134,6 +1222,215 @@ class WaveformWidget(QtWidgets.QWidget):
     def get_frequency(self) -> float:
         dt = self.get_delta_t()
         return (1.0 / dt) if dt > 1e-12 else 0.0
+
+    # -------------------------------------------------------------------------
+    # HỆ THỐNG MAGNETIC SNAP & QUICK MEASURE TOOL (UI_SPEC Mục 7)
+    # -------------------------------------------------------------------------
+    def get_channel_at_y(self, y_val: float) -> int:
+        """Xác định số thứ tự kênh (0..7) dựa trên tọa độ trục Y."""
+        y_cum = 0
+        for ch, h in enumerate(self.row_heights):
+            if y_cum <= y_val < y_cum + h:
+                return ch
+            y_cum += h
+        return -1
+
+    def get_channel_mid_y(self, ch: int) -> float:
+        """Lấy tọa độ Y tâm của một track kênh để vẽ Snap Dot hoặc Preview Line."""
+        if 0 <= ch < len(self.row_heights):
+            y_start = sum(self.row_heights[:ch])
+            return y_start + self.row_heights[ch] / 2.0
+        return sum(self.row_heights) / 2.0 if self.row_heights else 200.0
+
+    def find_closest_edge(
+        self,
+        t: float,
+        preferred_ch: Optional[int] = None,
+        max_px: Optional[float] = None
+    ) -> Tuple[Optional[float], Optional[int], float]:
+        """
+        Tìm kiếm sườn xung gần nhất với mốc thời gian t theo chuẩn UI_SPEC.md Mục 7.1:
+        - Bán kính hút: mặc định 15 pixels (độc lập với mức Zoom).
+        - Thứ tự ưu tiên kênh: (1) preferred_ch (track dưới trỏ chuột) -> (2) active_inspect_channel -> (3) tất cả kênh.
+        - Trả về: (t_snap, matched_ch, pixel_dist). Nếu vượt quá bán kính hút, trả về (None, None, inf).
+        """
+        if self.current_data is None:
+            return None, None, float("inf")
+
+        threshold_px = max_px if max_px is not None else self.snap_radius_px
+
+        def _calc_px_dist(t_cand: float) -> float:
+            p1 = self.vb.mapViewToDevice(QtCore.QPointF(t, 0))
+            p2 = self.vb.mapViewToDevice(QtCore.QPointF(t_cand, 0))
+            return abs(p2.x() - p1.x())
+
+        # Xây dựng danh sách ưu tiên tìm kiếm
+        priority_targets: List[Tuple[Optional[int], np.ndarray]] = []
+        if preferred_ch is not None and 0 <= preferred_ch < 8:
+            priority_targets.append((preferred_ch, self.channel_edges.get(preferred_ch, np.array([]))))
+
+        if self.active_inspect_channel != preferred_ch and 0 <= self.active_inspect_channel < 8:
+            priority_targets.append((self.active_inspect_channel, self.channel_edges.get(self.active_inspect_channel, np.array([]))))
+
+        priority_targets.append((None, self.all_edges))
+
+        for ch_target, edges in priority_targets:
+            if edges is None or len(edges) == 0:
+                continue
+
+            idx = np.searchsorted(edges, t)
+            candidates = []
+            if idx > 0:
+                candidates.append(edges[idx - 1])
+            if idx < len(edges):
+                candidates.append(edges[idx])
+
+            if not candidates:
+                continue
+
+            best_edge = min(candidates, key=lambda cand: abs(cand - t))
+            px_dist = _calc_px_dist(best_edge)
+            if px_dist <= threshold_px:
+                # Nếu matched kênh là None (tìm từ all_edges), truy hồi xem sườn này thuộc kênh nào
+                resolved_ch = ch_target
+                if resolved_ch is None:
+                    for c in range(8):
+                        c_edges = self.channel_edges.get(c, np.array([]))
+                        if len(c_edges) > 0 and np.any(np.abs(c_edges - best_edge) < 1e-12):
+                            resolved_ch = c
+                            break
+                return float(best_edge), resolved_ch, float(px_dist)
+
+        return None, None, float("inf")
+
+    def _on_scene_mouse_moved(self, pos: QtCore.QPointF):
+        """Xử lý sự kiện di chuột trong PlotWidget: cập nhật Point Inspector và Quick Measure Preview."""
+        if not self.vb.sceneBoundingRect().contains(pos):
+            return
+
+        view_pt = self.vb.mapSceneToView(pos)
+        t_mouse = float(view_pt.x())
+        y_mouse = float(view_pt.y())
+        self.hovered_channel = self.get_channel_at_y(y_mouse)
+
+        # 1. Point Inspector (Hover Timestamp)
+        if self.current_data is not None and self.current_time_axis is not None and len(self.current_time_axis) > 0:
+            fs = float(self.current_data["sample_rate"])
+            trig_offset = self._effective_trig_offset(int(self.current_data["trig_offset"]))
+            sample_count = int(self.current_data["sample_count"])
+            sample_idx = int(np.clip(round(t_mouse * fs + trig_offset), 0, sample_count - 1))
+            raw_val = 0
+            for ch in range(8):
+                if self.current_data["channels"][ch][sample_idx]:
+                    raw_val |= (1 << ch)
+            self.sigHoverTimestamp.emit(t_mouse, sample_idx, raw_val)
+
+        # 2. Quick Measure Live Preview
+        if self.quick_measure_active:
+            t_snap, ch, _ = self.find_closest_edge(
+                t_mouse,
+                preferred_ch=self.hovered_channel if self.hovered_channel >= 0 else None,
+                max_px=self.snap_radius_px
+            )
+            t_target = t_snap if t_snap is not None else t_mouse
+            y_mid = self.get_channel_mid_y(ch if ch is not None else (self.hovered_channel if self.hovered_channel >= 0 else 0))
+
+            if t_snap is not None:
+                pen_color = T.CURSOR_A if self.quick_measure_step == 1 else T.CURSOR_B
+                self.snap_dot.setData(
+                    pos=[[t_snap, y_mid]],
+                    pen=pg.mkPen(color=pen_color, width=2.0),
+                    brush=pg.mkBrush("#ffffff")
+                )
+                self.snap_dot.show()
+            else:
+                self.snap_dot.hide()
+
+            if self.quick_measure_step == 2:
+                # Vẽ đường xem trước từ t1 đến t_target
+                self.preview_measure_line.setData(x=[self.quick_measure_t1, t_target], y=[y_mid, y_mid])
+                self.preview_measure_line.show()
+
+                dt = abs(t_target - self.quick_measure_t1)
+                freq_str = format_si_freq(1.0 / dt) if dt > 1e-12 else "-- Hz"
+                self.preview_measure_text.setText(f"Δt: {format_si_time(dt)} ({freq_str})")
+                self.preview_measure_text.setPos(t_target, y_mid)
+                self.preview_measure_text.show()
+
+    def _on_scene_mouse_clicked(self, ev):
+        """Xử lý sự kiện click chuột trong PlotWidget cho Quick Measure Tool."""
+        if not self.quick_measure_active:
+            return
+
+        # Bấm chuột phải để hủy chế độ Quick Measure
+        if ev.button() == QtCore.Qt.RightButton:
+            self.cancel_quick_measure()
+            ev.accept()
+            return
+
+        if ev.button() == QtCore.Qt.LeftButton:
+            pos = ev.scenePos()
+            if not self.vb.sceneBoundingRect().contains(pos):
+                return
+            view_pt = self.vb.mapSceneToView(pos)
+            t_mouse = float(view_pt.x())
+            y_mouse = float(view_pt.y())
+            target_ch = self.get_channel_at_y(y_mouse)
+            t_snap, _, _ = self.find_closest_edge(
+                t_mouse,
+                preferred_ch=target_ch if target_ch >= 0 else None,
+                max_px=self.snap_radius_px
+            )
+            t_final = t_snap if t_snap is not None else t_mouse
+
+            if self.quick_measure_step == 1:
+                self._is_snapping = True
+                self.cursor_a.setValue(t_final)
+                self._is_snapping = False
+                self.quick_measure_t1 = t_final
+                self.quick_measure_step = 2
+                self._update_hud()
+                self.sigQuickMeasureState.emit(True, "Quick Measure: Click on end edge (B) to finish (Esc to cancel)")
+                ev.accept()
+            elif self.quick_measure_step == 2:
+                self._is_snapping = True
+                self.cursor_b.setValue(t_final)
+                self._is_snapping = False
+                self.finish_quick_measure()
+                ev.accept()
+
+    def start_quick_measure(self):
+        """Kích hoạt công cụ đo nhanh Quick Measure Tool (phím M hoặc nút |↔|)."""
+        self.quick_measure_active = True
+        self.quick_measure_step = 1
+        self.toggle_cursors(True)
+        self.plot_widget.setCursor(QtCore.Qt.CrossCursor)
+        self.sigQuickMeasureState.emit(True, "Quick Measure: Click to place Cursor A (Snap active, Esc to cancel)")
+
+    def cancel_quick_measure(self):
+        """Hủy bỏ chế độ đo nhanh và khôi phục con trỏ chuột thông thường."""
+        self.quick_measure_active = False
+        self.quick_measure_step = 0
+        self.preview_measure_line.hide()
+        self.preview_measure_text.hide()
+        self.snap_dot.hide()
+        self.plot_widget.setCursor(QtCore.Qt.ArrowCursor)
+        self.sigQuickMeasureState.emit(False, "")
+
+    def finish_quick_measure(self):
+        """Chốt kết quả đo nhanh hai điểm, cập nhật HUD và mở thanh đo span."""
+        dt = abs(self.cursor_b.value() - self.cursor_a.value())
+        freq_str = format_si_freq(1.0 / dt) if dt > 1e-12 else "-- Hz"
+        self.cancel_quick_measure()
+        self._update_hud()
+        self.sigQuickMeasureState.emit(False, f"Measured: Δt = {format_si_time(dt)}, f = {freq_str}")
+
+    def toggle_quick_measure(self):
+        """Chuyển đổi bật / tắt công cụ đo nhanh Quick Measure Tool."""
+        if self.quick_measure_active:
+            self.cancel_quick_measure()
+        else:
+            self.start_quick_measure()
 
     def render_data(self, res: Dict[str, Any]):
         """Vẽ 8 kênh dữ liệu lên viewport với mốc thời gian t = 0 tại Trigger (mẫu 6554)."""
@@ -1154,6 +1451,7 @@ class WaveformWidget(QtWidgets.QWidget):
             self.trigger_line.show()
             x_min = -trig_offset / sample_rate
             x_max = (sample_count - trig_offset) / sample_rate
+            self.current_time_axis = (np.arange(sample_count, dtype=np.float64) - trig_offset) / sample_rate
         elif status == 1:  # STATUS_FREERUN_OK
             t_marker = trig_offset / sample_rate
             self.trigger_line.setValue(t_marker)
@@ -1164,6 +1462,7 @@ class WaveformWidget(QtWidgets.QWidget):
             self.trigger_line.show()
             x_min = 0.0
             x_max = sample_count / sample_rate
+            self.current_time_axis = np.arange(sample_count, dtype=np.float64) / sample_rate
         else:  # STATUS_TIMEOUT
             t_marker = trig_offset / sample_rate
             self.trigger_line.setValue(t_marker)
@@ -1174,6 +1473,25 @@ class WaveformWidget(QtWidgets.QWidget):
             self.trigger_line.show()
             x_min = 0.0
             x_max = sample_count / sample_rate
+            self.current_time_axis = np.arange(sample_count, dtype=np.float64) / sample_rate
+
+        # Trích xuất vector sườn xung chuyển mức (Edge Transitions) phục vụ Magnetic Snap
+        channels = res.get("channels", [])
+        all_edges_list = []
+        for ch in range(min(8, len(channels))):
+            ch_data = channels[ch]
+            diff_indices = np.where(np.diff(ch_data) != 0)[0] + 1
+            if len(diff_indices) > 0 and self.current_time_axis is not None:
+                edge_times = self.current_time_axis[diff_indices]
+                self.channel_edges[ch] = edge_times
+                all_edges_list.append(edge_times)
+            else:
+                self.channel_edges[ch] = np.array([], dtype=np.float64)
+
+        if all_edges_list:
+            self.all_edges = np.unique(np.concatenate(all_edges_list))
+        else:
+            self.all_edges = np.array([], dtype=np.float64)
 
         self._update_curve_data()
 

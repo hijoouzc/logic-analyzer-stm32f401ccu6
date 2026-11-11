@@ -123,3 +123,86 @@ Chi tiết khung truyền xem [`spec/protocol.md`](../spec/protocol.md):
 * **Nhận Data Frame (Status `0x02` - Timeout):** Hiển thị vạch `"TIMEOUT"`, vẫn vẽ đầy đủ 32.768 mẫu thu được.
 * **Nhận NAK (`0xE0` - Checksum, `0xE1` - Rate, `0xE2` - Trigger, `0xE3` - Busy):** Hiển thị hộp thoại cảnh báo chi tiết mã lỗi cho người dùng.
 * **Đang thu thập 32.776 Byte:** Đổi nút tròn Start sang nút vuông Stop màu đỏ (`#db4c39`) hỗ trợ hủy lệnh tức thì (`CMD_ABORT`).
+
+---
+
+## 7. Đặc Tả Kỹ Thuật: Hệ Thống Đo Đạc Thông Minh (Magnetic Snap-To-Edge & Quick Measure Tool)
+
+Hệ thống đo đạc thời gian thông minh mô phỏng cơ chế làm việc của các dòng máy phân tích logic thương mại cao cấp (Saleae Logic 2, DSLogic, Tektronix Smart Cursors):
+
+### 7.1. Cơ chế Tự Khớp Sườn Xung Nam Châm (Magnetic Snap-to-Edge)
+
+```text
+Chuột di chuyển (t_mouse) ──────────> [Vùng bán kính hút R = 15 px]
+                                                  │
+                                         Sườn xung logic (t_edge)
+                                                  │ (px_dist <= 15)
+                                                  ▼
+                                 [Cursor A/B Tự Hút Khóa Vào t_edge]
+                                 [Hiển thị Snap Indicator Dot Ø 6px]
+```
+
+1. **Nguyên lý hoạt động:**
+   * Khi người dùng kéo rê Cursor A hoặc Cursor B (hoặc dùng chế độ Quick Measure), hệ thống tự động dò tìm các sườn chuyển mức logic (Rising Edge / Falling Edge) gần nhất.
+   * Nếu khoảng cách trên màn hình giữa vị trí chuột và sườn xung nhỏ hơn hoặc bằng **bán kính hút $R_{\text{snap}} = 15\text{ pixels}$**, vị trí con trỏ sẽ được khóa tự động (snap) dính chặt vào mốc thời gian $t_{\text{edge}}$ của mẫu chuyển mức logic thực tế.
+   * Nếu khoảng cách $> 15\text{ px}$, con trỏ di chuyển tự do và mượt mà theo từng mẫu.
+
+2. **Thuật toán & Hiệu năng xử lý:**
+   * Mảng chuyển mức logic được trích xuất bằng NumPy vectorization khi nạp dữ liệu:
+     $$\text{diff} = \Delta(\text{channel\_data}) \ne 0 \implies t_{\text{edge}} = \frac{\text{indices} - \text{trig\_offset}}{f_s}$$
+   * Khi con trỏ di chuyển đến $t$, thuật toán tìm kiếm nhị phân $O(\log N)$ thông qua `np.searchsorted()` xác định sườn xung gần nhất trong thời gian $< 5\,\mu\text{s}$, không gây giật lag đồ họa ở 60 FPS.
+   * Khoảng cách pixel được chuyển đổi động theo khung nhìn thực tế qua `ViewBox.mapViewToDevice()`, đảm bảo bán kính hút luôn là **15 pixels cố định** ở mọi mức Zoom (từ zoom bao quát toàn bộ 32K mẫu đến zoom sâu từng nano-giây).
+
+3. **Thứ tự Ưu tiên Kênh để Hút (Channel Snapping Priority):**
+   * **Ưu tiên 1:** Kênh mà con trỏ chuột đang trỏ vào (Track dưới trỏ chuột).
+   * **Ưu tiên 2:** Kênh đang được chọn phân tích trong thẻ Measurements (`combo_meas_ch`).
+   * **Ưu tiên 3:** Sườn xung gần nhất trên tất cả các kênh đang hiển thị.
+
+4. **Chỉ thị trực quan khi Snap (Visual Snap Feedback):**
+   * Vẽ một chấm tròn chỉ thị (Snap Indicator Dot) đường kính `6 px`, màu trắng viền xanh `#26a3d9` (cho Cursor A) hoặc viền đỏ `#ea5757` (cho Cursor B) tại giao điểm giữa sườn xung và vạch đo để người dùng nhận biết ngay lập tức là đã "hút dính".
+
+---
+
+### 7.2. Công Cụ Đo Nhanh Hai Điểm (Quick Measure Tool - Phím tắt `M`)
+
+Bên cạnh thao tác kéo thả thước đo A & B truyền thống, hệ thống cung cấp công cụ đo nhanh 2-Click:
+
+```
+[Phím tắt 'M' hoặc Nút Thước Đo] ──> Trạng thái 1: Chờ Click điểm bắt đầu (Start Edge)
+                                              │ (Click lần 1: Đặt Cursor A có Snap)
+                                              ▼
+                                     Trạng thái 2: Rê chuột xem trước (Live Preview Δt, f)
+                                              │ (Click lần 2: Đặt Cursor B có Snap)
+                                              ▼
+                                     Trạng thái 3: Chốt đo, cập nhật HUD, mở Span bar
+```
+
+1. **Kích hoạt công cụ:**
+   * Phím tắt bàn phím: **`M`** (Quick Measure Tool - chuẩn Saleae Logic).
+   * Nút bấm trên Activity Rail / Toolbar: Nút công cụ thước đo nhanh `btn_rail_measure` với biểu tượng monochrome kỹ thuật **`|↔|`** (Dimension Span / Caliper) hoặc **`Δt`** (Delta Time).
+   * Menu: `Measure` $\rightarrow$ `Quick Measure Tool (M)`.
+2. **Quy trình tương tác:**
+   * **Bước 1 (Chọn điểm đầu):** Con trỏ chuột chuyển thành hình chữ thập `Qt.CrossCursor`. Tooltip hướng dẫn hiển thị `"Click to place Cursor A (Snap active)"`. Khi người dùng click chuột trái, Cursor A được đặt tại vị trí click (tự động hút vào sườn xung nếu $\le 15\text{px}$).
+   * **Bước 2 (Xem trước kết quả động):** Khi rê chuột, một vạch chỉ báo tạm thời nối từ Cursor A tới vị trí chuột. Nhãn thông số bám theo chuột hiển thị trực tiếp $\Delta t = |t_{\text{mouse}} - t_A|$ và tần số $f = 1/\Delta t$.
+   * **Bước 3 (Chọn điểm cuối):** Click chuột trái lần 2 $\rightarrow$ Cursor B được đặt tại vị trí click (tự động hút vào sườn xung). Vùng đo được chốt lại, hiển thị thanh đo `|← Δt (f) →|` và cập nhật thông số lên HUD.
+   * **Thoát / Hủy:** Bấm phím **`Escape`** ở bất kỳ bước nào sẽ hủy bỏ chế độ đo và khôi phục con trỏ chuột thông thường.
+
+---
+
+### 7.3. Điểm Soi Thời Gian Đơn Điểm (Point Inspector / Hover Timestamp)
+
+* **Hover chuột trên Timeline hoặc Sóng:** Thanh trạng thái Status Bar hoặc Timeline hiển thị mốc thời gian tuyệt đối và tương đối so với Trigger:
+  `T: +1.234500 ms | Sample: #13962 | Value: 0x55`
+* **Click một lần vào sườn xung hoặc bong bóng ký tự giải mã:**
+  * Tự động hiển thị thẻ chi tiết: Thời điểm bắt đầu ($t_{\text{start}}$), độ rộng xung ($t_{\text{width}}$), giá trị logic/ASCII của byte dữ liệu.
+
+---
+
+## 8. Quy Chuẩn Kiểm Thử Tự Động Cho Hệ Thống Thước Đo Thông Minh
+
+Mọi thay đổi mã nguồn liên quan đến thước đo bắt buộc phải vượt qua bộ kiểm thử tự động `software/tests/test_smart_cursors.py`:
+1. **Kiểm thử Snap:** Đặt cursor lệch sườn xung 10px $\rightarrow$ Vị trí cursor phải tự động nhảy trùng khít với $t_{\text{edge}}$.
+2. **Kiểm thử Free Movement:** Đặt cursor lệch sườn xung 25px ($> 15\text{px}$) $\rightarrow$ Vị trí cursor giữ nguyên tọa độ tự do, không bị hút nhầm.
+3. **Kiểm thử Phím tắt `M` (2-Click Measure):** Kích hoạt chế độ đo bằng phím `M`, mô phỏng 2 sự kiện click chuột trái $\rightarrow$ Cursors A và B phải được ghim chính xác tại 2 mốc và tính đúng $\Delta t$.
+4. **Kiểm thử Phím `Escape`:** Kích hoạt chế độ đo rồi bấm `Escape` $\rightarrow$ Trạng thái phải quay về thông thường, không bị kẹt chuột chữ thập.
+5. **Kiểm thử hồi quy:** 100% PASS trên `test_auto_repeat.py`, `test_gui_integration.py` và `test_phase2_commercial.py`.
