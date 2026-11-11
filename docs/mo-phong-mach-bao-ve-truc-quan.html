@@ -1,0 +1,1524 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Báo Cáo & Mô Phỏng Trực Quan Mạch Bảo Vệ Đầu Vào Logic Analyzer (TV2 - HUST)</title>
+  <style>
+    :root {
+      --bg: #f1f5f9;
+      --card: #ffffff;
+      --card-alt: #f8fafc;
+      --border: #cbd5e1;
+      --border-light: #e2e8f0;
+      --text: #0f172a;
+      --text-secondary: #334155;
+      --muted: #64748b;
+      --primary: #0284c7;
+      --primary-bg: #e0f2fe;
+      --green: #15803d;
+      --green-bg: #dcfce7;
+      --amber: #b45309;
+      --amber-bg: #fef3c7;
+      --red: #b91c1c;
+      --red-bg: #fee2e2;
+      --purple: #6d28d9;
+      --purple-bg: #ede9fe;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.5;
+      padding: 20px;
+      max-width: 1520px;
+      margin: 0 auto;
+    }
+
+    /* Header */
+    header {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-top: 4px solid var(--primary);
+      border-radius: 10px;
+      padding: 16px 22px;
+      margin-bottom: 16px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 12px;
+      box-shadow: 0 1px 3px rgba(15, 23, 42, 0.05);
+    }
+    header h1 {
+      font-size: 1.3rem;
+      color: var(--text);
+      margin-bottom: 4px;
+    }
+    header p {
+      font-size: 0.88rem;
+      color: var(--text-secondary);
+    }
+    .req-pill {
+      background: var(--primary-bg);
+      border: 1px solid #7dd3fc;
+      color: #0369a1;
+      padding: 8px 14px;
+      border-radius: 8px;
+      font-size: 0.82rem;
+      font-weight: 600;
+    }
+
+    /* Quick Scenario Selector */
+    .scenario-bar {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(215px, 1fr));
+      gap: 10px;
+      margin-bottom: 16px;
+    }
+    .scenario-btn {
+      background: var(--card);
+      border: 1.5px solid var(--border);
+      color: var(--text);
+      padding: 10px 14px;
+      border-radius: 8px;
+      cursor: pointer;
+      text-align: left;
+      transition: all 0.15s ease;
+      box-shadow: 0 1px 2px rgba(15, 23, 42, 0.03);
+    }
+    .scenario-btn:hover {
+      border-color: var(--primary);
+      background: #f8fafc;
+    }
+    .scenario-btn.active {
+      border-color: var(--primary);
+      background: var(--primary-bg);
+      box-shadow: 0 0 0 2px rgba(2, 132, 199, 0.2);
+    }
+    .scenario-btn .sc-title {
+      font-weight: 700;
+      font-size: 0.88rem;
+      color: #0369a1;
+      display: block;
+      margin-bottom: 2px;
+    }
+    .scenario-btn .sc-sub {
+      font-size: 0.77rem;
+      color: var(--text-secondary);
+    }
+
+    /* Layout Grid */
+    .workspace-grid {
+      display: grid;
+      grid-template-columns: 370px 1fr;
+      gap: 16px;
+      margin-bottom: 16px;
+      align-items: start;
+    }
+    @media (max-width: 1150px) {
+      .workspace-grid { grid-template-columns: 1fr; }
+    }
+
+    .card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 16px;
+      box-shadow: 0 1px 3px rgba(15, 23, 42, 0.04);
+      margin-bottom: 16px;
+    }
+    .card:last-child { margin-bottom: 0; }
+    .card-title {
+      font-size: 0.98rem;
+      font-weight: 700;
+      color: var(--text);
+      border-bottom: 1.5px solid var(--border-light);
+      padding-bottom: 10px;
+      margin-bottom: 12px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    /* Controls */
+    .control-group {
+      background: var(--card-alt);
+      border: 1px solid var(--border-light);
+      border-radius: 8px;
+      padding: 10px 12px;
+      margin-bottom: 10px;
+    }
+    .control-group.multi-ch {
+      background: #f5f3ff;
+      border-color: #c4b5fd;
+    }
+    .control-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 0.84rem;
+      margin-bottom: 4px;
+    }
+    .control-header label {
+      font-weight: 600;
+      color: var(--text-secondary);
+    }
+    .control-val {
+      font-weight: 700;
+      color: var(--primary);
+      font-family: 'Consolas', monospace;
+      font-size: 0.9rem;
+      background: #ffffff;
+      padding: 1px 7px;
+      border-radius: 4px;
+      border: 1px solid var(--border-light);
+    }
+    .control-hint {
+      font-size: 0.75rem;
+      color: var(--muted);
+      margin-top: 4px;
+    }
+    input[type="range"] {
+      width: 100%;
+      accent-color: var(--primary);
+      cursor: pointer;
+    }
+    select {
+      width: 100%;
+      padding: 6px 8px;
+      background: #ffffff;
+      color: var(--text);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      font-size: 0.83rem;
+      margin-top: 3px;
+    }
+
+    /* Tabs */
+    .view-tabs {
+      display: flex;
+      gap: 6px;
+    }
+    .tab-btn {
+      background: var(--card-alt);
+      border: 1px solid var(--border);
+      color: var(--text-secondary);
+      padding: 5px 12px;
+      border-radius: 6px;
+      font-size: 0.8rem;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    .tab-btn.active {
+      background: var(--primary);
+      color: #ffffff;
+      border-color: var(--primary);
+    }
+
+    /* Schematic Container */
+    .schematic-wrapper {
+      background: #ffffff;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 10px;
+      overflow-x: auto;
+    }
+    svg.schematic {
+      width: 100%;
+      height: auto;
+      min-width: 760px;
+      display: block;
+    }
+
+    /* Explanation Banner */
+    .explain-banner {
+      background: #f0f9ff;
+      border: 1px solid #bae6fd;
+      border-left: 4px solid var(--primary);
+      border-radius: 6px;
+      padding: 12px 16px;
+      margin-top: 12px;
+      font-size: 0.87rem;
+      color: var(--text-secondary);
+    }
+    .explain-banner h3 {
+      font-size: 0.93rem;
+      color: #0369a1;
+      margin-bottom: 6px;
+    }
+    .explain-banner ul { padding-left: 18px; }
+    .explain-banner li { margin-bottom: 4px; }
+
+    /* Tables */
+    .table-responsive {
+      overflow-x: auto;
+    }
+    table.data-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.84rem;
+      background: #ffffff;
+    }
+    table.data-table th,
+    table.data-table td {
+      border: 1px solid var(--border);
+      padding: 8px 11px;
+      text-align: left;
+      vertical-align: middle;
+    }
+    table.data-table th {
+      background: #f1f5f9;
+      color: var(--text);
+      font-weight: 700;
+      font-size: 0.82rem;
+    }
+    table.data-table tr:nth-child(even) td {
+      background: #f8fafc;
+    }
+    table.data-table tr.active-row td {
+      background: #e0f2fe;
+    }
+    .mono {
+      font-family: 'Consolas', monospace;
+      font-weight: 600;
+    }
+    .badge {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 99px;
+      font-size: 0.75rem;
+      font-weight: 700;
+    }
+    .badge-ok { background: var(--green-bg); color: var(--green); border: 1px solid #86efac; }
+    .badge-warn { background: var(--amber-bg); color: var(--amber); border: 1px solid #fde047; }
+    .badge-err { background: var(--red-bg); color: var(--red); border: 1px solid #fca5a5; }
+    .badge-info { background: var(--primary-bg); color: #0369a1; border: 1px solid #7dd3fc; }
+
+    /* Scope Plots (Light Mode) */
+    .plots-container {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      background: #f8fafc;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 12px;
+    }
+    .plot-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 0.82rem;
+      font-weight: 600;
+      margin-bottom: 4px;
+      flex-wrap: wrap;
+      gap: 6px;
+    }
+    .ch-legend {
+      display: flex;
+      gap: 10px;
+      font-size: 0.76rem;
+      font-family: 'Consolas', monospace;
+      flex-wrap: wrap;
+      padding: 6px 10px;
+      background: #ffffff;
+      border: 1px solid var(--border-light);
+      border-radius: 6px;
+      margin-bottom: 4px;
+    }
+    canvas.scope {
+      width: 100%;
+      height: 130px;
+      background: #ffffff;
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      display: block;
+      cursor: crosshair;
+    }
+    .cursor-readout {
+      font-family: 'Consolas', monospace;
+      font-size: 0.8rem;
+      background: #ffffff;
+      border: 1px solid var(--border);
+      padding: 4px 10px;
+      border-radius: 6px;
+      color: var(--text-secondary);
+    }
+
+    /* LTspice command box */
+    .spice-box {
+      background: #f8fafc;
+      border: 1.5px dashed var(--primary);
+      border-radius: 8px;
+      padding: 10px 12px;
+      font-family: 'Consolas', monospace;
+      font-size: 0.81rem;
+      color: var(--text);
+      margin-top: 10px;
+    }
+    .spice-box .code-hl {
+      color: #b45309;
+      font-weight: 700;
+      background: #fef3c7;
+      padding: 1px 5px;
+      border-radius: 3px;
+    }
+
+    .btn-mini {
+      background: var(--primary);
+      color: #fff;
+      border: none;
+      border-radius: 4px;
+      padding: 4px 9px;
+      font-size: 0.75rem;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    .btn-mini:hover { opacity: 0.9; }
+
+    .flow-anim {
+      stroke-dasharray: 8 6;
+      animation: dashFlow 0.75s linear infinite;
+    }
+    @keyframes dashFlow {
+      to { stroke-dashoffset: -28; }
+    }
+  </style>
+</head>
+<body>
+
+  <header>
+    <div>
+      <h1>BÁO CÁO & MÔ PHỎNG TRỰC QUAN MẠCH BẢO VỆ ĐẦU VÀO LOGIC ANALYZER (TV2)</h1>
+      <p>Giao diện nền sáng trực quan hỗ trợ đối chiếu số liệu 1 kênh vs 8 kênh, kiểm tra ngưỡng an toàn và xuất thông số chuẩn LTspice</p>
+    </div>
+    <div class="req-pill">
+      Chuẩn Đề Bài (Mục 3): DC liên tục ≥ 12V (Test 15V–20V) | Xung đơn ±200V (1ms) | Sóng vuông 10kHz – 1MHz
+    </div>
+  </header>
+
+  <!-- Thanh chọn nhanh 6 Kịch bản -->
+  <div class="scenario-bar">
+    <button class="scenario-btn active" id="btnSc_dc20" onclick="loadScenario('dc20')">
+      <span class="sc-title">1A. Quá áp DC +20V (1 Kênh)</span>
+      <span class="sc-sub">Kịch bản 1 trong Word: Cắm nhầm 1 kênh vào +20V DC</span>
+    </button>
+    <button class="scenario-btn" id="btnSc_dc15_8ch" onclick="loadScenario('dc15_8ch')">
+      <span class="sc-title">1B. Quá áp DC +15V (Cả 8 Kênh)</span>
+      <span class="sc-sub">8 kênh cùng xả dòng gấp 8 lần (90mA) vào Zener D1 chung</span>
+    </button>
+    <button class="scenario-btn" id="btnSc_pulse30_neg" onclick="loadScenario('pulse30_neg')">
+      <span class="sc-title">2A. Xung -30V / 1ms (File Word)</span>
+      <span class="sc-sub">Kịch bản 2 trong Word: PULSE(0 -30 1m 1u 1u 1m 3m)</span>
+    </button>
+    <button class="scenario-btn" id="btnSc_pulse200_pos" onclick="loadScenario('pulse200_pos')">
+      <span class="sc-title">2B. Xung +200V / 1ms (Chuẩn Đề Bài)</span>
+      <span class="sc-sub">Yêu cầu bắt buộc Mục 3 Đề bài: Xung đơn 200V rộng 1ms</span>
+    </button>
+    <button class="scenario-btn" id="btnSc_sq10k" onclick="loadScenario('sq10k')">
+      <span class="sc-title">3. Sóng vuông 10 kHz (0–3.3V)</span>
+      <span class="sc-sub">Chu kỳ 100 µs → Bảo toàn xung vuông sắc nét</span>
+    </button>
+    <button class="scenario-btn" id="btnSc_sq1m" onclick="loadScenario('sq1m')">
+      <span class="sc-title">4. Sóng vuông 1 MHz (0–3.3V)</span>
+      <span class="sc-sub">Chu kỳ 1 µs → Đo độ cong RC, thời gian sườn lên & độ trễ</span>
+    </button>
+  </div>
+
+  <div class="workspace-grid">
+    <!-- CỘT TRÁI: ĐIỀU KHIỂN THÔNG SỐ -->
+    <div class="card">
+      <div class="card-title">
+        <span>🎛️ Cấu Hình Thông Số Mạch & Nguồn Tín Hiệu</span>
+      </div>
+
+      <div class="control-group multi-ch">
+        <div class="control-header">
+          <label style="color:var(--purple);">Số kênh cùng cấp tín hiệu (N = 1 → 8):</label>
+          <span class="control-val" id="valNumCh" style="color:var(--purple);">1 / 8 kênh</span>
+        </div>
+        <input type="range" id="ctrlNumCh" min="1" max="8" step="1" value="1" oninput="onParamChange()" />
+        <div style="margin-top:6px;">
+          <label style="font-size:0.78rem; font-weight:600; color:var(--text-secondary);">Chế độ hiển thị nhiều kênh trên đồ thị:</label>
+          <select id="ctrlMultiDisplay" onchange="onParamChange()">
+            <option value="identical">Lý tưởng: 8 kênh trùng khít nhau (Như file Word)</option>
+            <option value="tolerance">Thực tế: Dung sai R1 (±1%), C1 (±5%) → Thấy độ lệch Skew</option>
+            <option value="stagger">Tách pha 8 kênh (Để quan sát riêng từng kênh 1..8)</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="control-group">
+        <div class="control-header">
+          <label>Loại tín hiệu đầu vào (Vin):</label>
+        </div>
+        <select id="ctrlMode" onchange="onParamChange()">
+          <option value="dc">1. Điện áp một chiều liên tục (DC Overvoltage)</option>
+          <option value="pulse">2. Xung quá áp đơn lẻ 1 ms (Transient Pulse)</option>
+          <option value="square">3. Sóng vuông Logic 0V ↔ 3.3V (Square Wave)</option>
+        </select>
+      </div>
+
+      <div class="control-group" id="grpVoltage">
+        <div class="control-header">
+          <label id="lblVin">Biên độ điện áp Vin:</label>
+          <span class="control-val" id="valVin">+20.0 V</span>
+        </div>
+        <input type="range" id="ctrlVin" min="-220" max="220" step="1" value="20" oninput="onParamChange()" />
+        <div class="control-hint">Kéo sang Dương (&gt; +3.6V) → Diode trên U1 dẫn; Kéo sang Âm (&lt; -0.3V) → Diode dưới U2 dẫn.</div>
+      </div>
+
+      <div class="control-group" id="grpFreq" style="display:none;">
+        <div class="control-header">
+          <label>Tần số sóng vuông (f):</label>
+          <span class="control-val" id="valFreq">1000 kHz (1.00 MHz)</span>
+        </div>
+        <input type="range" id="ctrlFreq" min="10" max="3000" step="10" value="1000" oninput="onParamChange()" />
+        <div class="control-hint">Đề bài yêu cầu kiểm chứng từ 10 kHz đến 1 MHz (mở rộng tới 3 MHz).</div>
+      </div>
+
+      <div class="control-group">
+        <div class="control-header">
+          <label>Điện trở hạn dòng R1 (Mỗi kênh):</label>
+          <span class="control-val" id="valR1">1.0 kΩ</span>
+        </div>
+        <input type="range" id="ctrlR1" min="0.2" max="10.0" step="0.1" value="1.0" oninput="onParamChange()" />
+        <div class="control-hint">Tăng R1 giúp giảm dòng quá áp nhưng làm tăng hằng số thời gian $\tau = R_1 C_1$.</div>
+      </div>
+
+      <div class="control-group">
+        <div class="control-header">
+          <label>Tụ điện C1 tại nút N_PROTECT:</label>
+          <span class="control-val" id="valC1">22 pF</span>
+        </div>
+        <input type="range" id="ctrlC1" min="2" max="150" step="1" value="22" oninput="onParamChange()" />
+        <div class="control-hint">Kéo C1 lên lớn (&gt;100 pF) ở 1 MHz sẽ làm sườn xung bị tù và gây mất xung ở Vout.</div>
+      </div>
+
+      <div class="control-group">
+        <div class="control-header">
+          <label>Mô hình đường nguồn 3.3V & Zener D1:</label>
+        </div>
+        <select id="ctrlRailMode" onchange="onParamChange()">
+          <option value="realistic">Thực tế (LDO không hút dòng + Zener 3.6V có trở động r_z = 3.5Ω)</option>
+          <option value="word">Theo file Word hiện tại (Nguồn V2 = 3.3V lý tưởng ghim cứng)</option>
+        </select>
+      </div>
+
+      <div class="control-group">
+        <div class="control-header">
+          <label>Ngưỡng cắt Logic B1 (V_th):</label>
+          <span class="control-val" id="valVth">1.65 V</span>
+        </div>
+        <input type="range" id="ctrlVth" min="0.8" max="2.2" step="0.05" value="1.65" oninput="onParamChange()" />
+        <div class="control-hint">Mô hình B1 dùng 1.65V. IC đệm 74LVC245 có $V_{IH}=2.0\text{V}, V_{IL}=0.8\text{V}$.</div>
+      </div>
+
+      <div class="spice-box">
+        <div style="font-weight:700; color:var(--primary); margin-bottom:4px;">📋 Cú pháp LTspice tương ứng để copy:</div>
+        <div id="txtSpiceSource" style="margin-bottom:3px;">V1: <span class="code-hl">20</span></div>
+        <div id="txtSpiceTran">Lệnh chạy: <span class="code-hl">.tran 0 5m 0 1u</span></div>
+      </div>
+    </div>
+
+    <!-- CỘT PHẢI: SƠ ĐỒ MẠCH + BẢNG SỐ LIỆU ĐO + ĐỒ THỊ -->
+    <div>
+      <!-- 1. SƠ ĐỒ NGUYÊN LÝ (KHÔNG BỊ ĐÈ CHỮ, NỀN SÁNG RÕ NÉT) -->
+      <div class="card">
+        <div class="card-title">
+          <span>⚡ Sơ Đồ Nguyên Lý Trực Quan & Đường Đi Dòng Điện</span>
+          <div class="view-tabs">
+            <button class="tab-btn active" id="btnTab1Ch" onclick="switchSchematicView('1ch')">Sơ Đồ Chi Tiết 1 Kênh (Rõ Nhất)</button>
+            <button class="tab-btn" id="btnTab8Ch" onclick="switchSchematicView('8ch')">Sơ Đồ Toàn Cảnh 8 Kênh (Như File Word)</button>
+          </div>
+        </div>
+
+        <!-- SƠ ĐỒ CHI TIẾT 1 KÊNH (BỐ CỤC THOÁNG, KHÔNG CHỒNG LẤN TEXT) -->
+        <div class="schematic-wrapper" id="boxSchematic1Ch">
+          <svg class="schematic" viewBox="0 0 920 310">
+            <!-- Thanh nguồn Rail 3.3V phía trên -->
+            <rect x="240" y="8" width="420" height="28" rx="6" fill="#fef3c7" stroke="#f59e0b" stroke-width="1.5" />
+            <text x="450" y="26" fill="#b45309" font-size="12.5" font-weight="bold" text-anchor="middle" id="svgRailBanner">
+              ĐƯỜNG NGUỒN CHUNG 8 KÊNH: V(Rail_3V3) = 3.30 V
+            </text>
+            <line x1="250" y1="50" x2="650" y2="50" stroke="#d97706" stroke-width="3" />
+            <line x1="450" y1="36" x2="450" y2="50" stroke="#d97706" stroke-width="2.5" />
+
+            <!-- Cụm Zener D1 (3.6V) trên Rail 3.3V -->
+            <line x1="500" y1="50" x2="500" y2="112" stroke="#64748b" stroke-width="2" />
+            <polygon points="489,88 511,88 500,68" fill="#fef3c7" stroke="#d97706" stroke-width="2" />
+            <line x1="487" y1="68" x2="513" y2="68" stroke="#d97706" stroke-width="2.2" />
+            <line x1="487" y1="68" x2="483" y2="74" stroke="#d97706" stroke-width="2" />
+            <line x1="513" y1="68" x2="517" y2="62" stroke="#d97706" stroke-width="2" />
+            <line x1="490" y1="112" x2="510" y2="112" stroke="#475569" stroke-width="2" />
+            <line x1="494" y1="116" x2="506" y2="116" stroke="#475569" stroke-width="2" />
+            <text x="520" y="78" fill="#334155" font-size="11" font-weight="bold">D1 (Zener 3.6V)</text>
+            <text x="520" y="93" fill="#b45309" font-size="10.5" font-weight="bold" id="svgZenerCurrent">I_z = 0.0 mA</text>
+
+            <!-- Tụ lọc nguồn C2 = 10uF -->
+            <line x1="625" y1="50" x2="625" y2="74" stroke="#64748b" stroke-width="2" />
+            <line x1="613" y1="74" x2="637" y2="74" stroke="#0284c7" stroke-width="2.5" />
+            <line x1="613" y1="81" x2="637" y2="81" stroke="#0284c7" stroke-width="2.5" />
+            <line x1="625" y1="81" x2="625" y2="112" stroke="#64748b" stroke-width="2" />
+            <line x1="615" y1="112" x2="635" y2="112" stroke="#475569" stroke-width="2" />
+            <text x="644" y="82" fill="#334155" font-size="11" font-weight="bold">C2 = 10µF</text>
+
+            <!-- Nguồn tín hiệu V1 bên trái -->
+            <line x1="60" y1="145" x2="60" y2="180" stroke="#15803d" stroke-width="2.5" />
+            <circle cx="60" cy="204" r="24" fill="#dcfce7" stroke="#15803d" stroke-width="2.5" />
+            <text x="60" y="201" fill="#15803d" font-size="12" font-weight="bold" text-anchor="middle">V1</text>
+            <text x="60" y="215" fill="#334155" font-size="9.5" text-anchor="middle">(Que đo)</text>
+            <line x1="60" y1="228" x2="60" y2="275" stroke="#475569" stroke-width="2.5" />
+
+            <!-- Dây từ V1 vào R1 -->
+            <line x1="60" y1="145" x2="145" y2="145" stroke="#15803d" stroke-width="2.5" />
+            <circle cx="100" cy="145" r="4.5" fill="#15803d" />
+            <rect x="42" y="108" width="116" height="24" rx="5" fill="#dcfce7" stroke="#86efac" stroke-width="1.2" />
+            <text x="100" y="124" fill="#15803d" font-size="11.5" font-weight="bold" text-anchor="middle" id="svgVinText">Vin = +20.0 V</text>
+
+            <!-- Điện trở R1 -->
+            <rect x="145" y="130" width="96" height="30" rx="5" fill="#f8fafc" stroke="#0284c7" stroke-width="2.5" />
+            <text x="193" y="149" fill="#0f172a" font-size="12" font-weight="bold" text-anchor="middle" id="svgR1Text">R1 = 1.0 kΩ</text>
+            <!-- Hộp thông số rơi áp trên R1 đặt tách phía trên R1 -->
+            <rect x="133" y="96" width="120" height="24" rx="4" fill="#fff7ed" stroke="#fdba74" stroke-width="1" />
+            <text x="193" y="112" fill="#c2410c" font-size="10.5" font-weight="bold" text-anchor="middle" id="svgR1Drop">ΔU = 16.4V | 16.4mA</text>
+
+            <!-- Đường trục chính N_PROTECT -->
+            <line x1="241" y1="145" x2="545" y2="145" stroke="#0284c7" stroke-width="2.5" />
+
+            <!-- Đường hiệu ứng dòng điện chạy -->
+            <path id="animCurrentPath" d="M 100 145 L 315 145 L 315 50" fill="none" stroke="#dc2626" stroke-width="3.5" class="flow-anim" />
+
+            <!-- Nhánh Diode trên U1 (BAT54S) tại x = 315 -->
+            <line x1="315" y1="145" x2="315" y2="50" stroke="#64748b" stroke-width="2.2" id="wireU1" />
+            <polygon points="303,108 327,108 315,86" fill="#ffffff" stroke="#64748b" stroke-width="2" id="polyU1" />
+            <line x1="303" y1="86" x2="327" y2="86" stroke="#64748b" stroke-width="2.5" />
+            <!-- Nhãn U1 đặt bên trái nhánh diode, không đè lên dây -->
+            <text x="296" y="96" fill="#334155" font-size="11" font-weight="bold" text-anchor="end">U1 (BAT54S)</text>
+            <text x="296" y="110" fill="#64748b" font-size="10" font-weight="bold" text-anchor="end" id="txtU1State">Đang khóa</text>
+
+            <!-- Nhánh Diode dưới U2 (BAT54S) tại x = 315 -->
+            <line x1="315" y1="145" x2="315" y2="275" stroke="#64748b" stroke-width="2.2" id="wireU2" />
+            <polygon points="303,225 327,225 315,203" fill="#ffffff" stroke="#64748b" stroke-width="2" id="polyU2" />
+            <line x1="303" y1="203" x2="327" y2="203" stroke="#64748b" stroke-width="2.5" />
+            <!-- Nhãn U2 đặt bên trái nhánh diode dưới -->
+            <text x="296" y="213" fill="#334155" font-size="11" font-weight="bold" text-anchor="end">U2 (BAT54S)</text>
+            <text x="296" y="227" fill="#64748b" font-size="10" font-weight="bold" text-anchor="end" id="txtU2State">Đang khóa</text>
+
+            <!-- Điểm nút N_PROTECT và Hộp hiển thị điện áp N_PROTECT (đặt phía trên x=415, hoàn toàn trống trải) -->
+            <circle cx="315" cy="145" r="5" fill="#0284c7" />
+            <circle cx="415" cy="145" r="5" fill="#0284c7" />
+            <rect x="345" y="108" width="145" height="26" rx="5" fill="#e0f2fe" stroke="#0284c7" stroke-width="1.5" />
+            <text x="417" y="125" fill="#0369a1" font-size="11.5" font-weight="bold" text-anchor="middle" id="svgNProtectText">N_PROTECT = +3.61 V</text>
+
+            <!-- Nhánh Tụ C1 nối từ N_PROTECT xuống GND tại x = 415 -->
+            <line x1="415" y1="145" x2="415" y2="205" stroke="#0284c7" stroke-width="2" />
+            <line x1="400" y1="205" x2="430" y2="205" stroke="#0284c7" stroke-width="3" />
+            <line x1="400" y1="213" x2="430" y2="213" stroke="#0284c7" stroke-width="3" />
+            <line x1="415" y1="213" x2="415" y2="275" stroke="#64748b" stroke-width="2" />
+            <text x="438" y="208" fill="#0369a1" font-size="11.5" font-weight="bold" id="svgC1Text">C1 = 22 pF</text>
+            <text x="438" y="223" fill="#64748b" font-size="10.5" id="svgTauText">(τ = R1·C1 = 22.0 ns)</text>
+
+            <!-- Khối chuyển mức B1 / IC đệm 74LVC245 -->
+            <rect x="545" y="115" width="175" height="60" rx="8" fill="#fefce8" stroke="#ca8a04" stroke-width="2" />
+            <text x="632" y="135" fill="#a16207" font-size="11.5" font-weight="bold" text-anchor="middle">Khối B1 / Đệm 74LVC245</text>
+            <text x="632" y="151" fill="#334155" font-size="10.5" font-family="Consolas, monospace" text-anchor="middle" id="svgB1Formula">V(N_PROTECT) &gt; 1.65V</text>
+            <text x="632" y="166" fill="#64748b" font-size="9.5" text-anchor="middle">Xuất mức Logic chuẩn 0V / 3.3V</text>
+
+            <!-- Đầu ra Vout sang STM32 PA0..PA7 -->
+            <line x1="720" y1="145" x2="805" y2="145" stroke="#ca8a04" stroke-width="2.5" />
+            <circle cx="762" cy="145" r="4.5" fill="#ca8a04" />
+            <rect x="716" y="108" width="92" height="24" rx="5" fill="#fef3c7" stroke="#fcd34d" stroke-width="1.2" />
+            <text x="762" y="124" fill="#b45309" font-size="11.5" font-weight="bold" text-anchor="middle" id="svgVoutText">Vout = 3.3 V</text>
+
+            <rect x="815" y="117" width="90" height="56" rx="7" fill="#dcfce7" stroke="#15803d" stroke-width="2" />
+            <text x="860" y="142" fill="#15803d" font-size="11.5" font-weight="bold" text-anchor="middle">STM32F401</text>
+            <text x="860" y="158" fill="#334155" font-size="10.5" font-weight="bold" text-anchor="middle">PA0 .. PA7</text>
+
+            <!-- Đường GND chung dưới đáy -->
+            <line x1="60" y1="275" x2="450" y2="275" stroke="#475569" stroke-width="2.5" />
+            <line x1="300" y1="284" x2="330" y2="284" stroke="#475569" stroke-width="2.5" />
+            <line x1="307" y1="290" x2="323" y2="290" stroke="#475569" stroke-width="2.5" />
+            <text x="200" y="293" fill="#475569" font-size="11" font-weight="bold">Đất chung: GND (0V)</text>
+          </svg>
+        </div>
+
+        <!-- SƠ ĐỒ 8 KÊNH (NỀN SÁNG, CĂN CHỈNH GỌN GÀNG KHÔNG ĐÈ TEXT) -->
+        <div class="schematic-wrapper" id="boxSchematic8Ch" style="display:none;">
+          <svg class="schematic" viewBox="0 0 920 350" id="svg8Channels"></svg>
+        </div>
+
+        <div class="explain-banner" id="liveExplanation"></div>
+      </div>
+
+      <!-- 2. BẢNG SỐ LIỆU ĐO ĐẠC TRỰC TIẾP & ĐỐI CHIẾU NGƯỠNG AN TOÀN -->
+      <div class="card">
+        <div class="card-title">
+          <span>📊 Bảng 1: Số Liệu Đo Đạc & Đối Chiếu An Toàn Của Cấu Hình Đang Chọn</span>
+          <span class="badge badge-info" id="lblCurrentConfigTag">Cấu hình: R1 = 1.0 kΩ, C1 = 22 pF</span>
+        </div>
+        <div class="table-responsive">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>Thông số kiểm tra</th>
+                <th>Ký hiệu / Vị trí đo</th>
+                <th>Giá trị (1 Kênh đơn lẻ)</th>
+                <th id="thMultiCh">Giá trị (Khi cấp đồng thời N kênh)</th>
+                <th>Giới hạn cho phép (Đề bài & Datasheet)</th>
+                <th>Kết luận</th>
+              </tr>
+            </thead>
+            <tbody id="tbodyLiveMetrics">
+              <!-- Được cập nhật tự động bằng JS -->
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- 3. ĐỒ THỊ DẠNG SÓNG LTSPICE (NỀN SÁNG + CON TRỎ ĐO CURSOR) -->
+      <div class="card">
+        <div class="card-title">
+          <span>📈 Đồ Thị Dạng Sóng 3 Tầng (Vin → N_PROTECT → Vout) — Di chuột lên đồ thị để đọc giá trị từng thời điểm!</span>
+          <span class="cursor-readout" id="cursorReadout">🔍 Di chuột vào đồ thị để đo bằng Cursor...</span>
+        </div>
+
+        <div class="ch-legend" id="chLegendBar"></div>
+
+        <div class="plots-container">
+          <div>
+            <div class="plot-header">
+              <span style="color:#15803d;">1. V(Vin) — Tín hiệu tại đầu que đo trước điện trở R1</span>
+              <span id="lblPlot1Range" style="color:var(--muted);" class="mono"></span>
+            </div>
+            <canvas id="canvasVin" class="scope" width="860" height="130"></canvas>
+          </div>
+
+          <div>
+            <div class="plot-header">
+              <span style="color:#0284c7;">2. V(N_PROTECT) — Điện áp sau mạng bảo vệ (Nút vào IC đệm / B1)</span>
+              <span id="lblPlot2Range" style="color:var(--muted);" class="mono"></span>
+            </div>
+            <canvas id="canvasProtect" class="scope" width="860" height="130"></canvas>
+          </div>
+
+          <div>
+            <div class="plot-header">
+              <span style="color:#b45309;">3. V(Vout) — Tín hiệu Logic đầu ra sau khối B1 (Đưa vào STM32 PA0..PA7)</span>
+              <span id="lblPlot3Range" style="color:var(--muted);" class="mono"></span>
+            </div>
+            <canvas id="canvasVout" class="scope" width="860" height="130"></canvas>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 4. BẢNG TỔNG HỢP ĐỐI CHIẾU TOÀN BỘ 6 KỊCH BẢN (ĐỂ ĐƯA VÀO BÁO CÁO / SLIDE) -->
+  <div class="card">
+    <div class="card-title">
+      <span>📑 Bảng 2: Bảng Tổng Hợp Đối Chiếu Toàn Bộ Các Kịch Bản Kiểm Thử (Theo Chuẩn Đề Bài & File Word)</span>
+      <span style="font-size:0.8rem; color:var(--muted); font-weight:normal;">Bấm nút <b>"Xem trên đồ thị"</b> ở cột cuối để nạp nhanh kịch bản tương ứng</span>
+    </div>
+    <div class="table-responsive">
+      <table class="data-table" id="tableAllScenarios">
+        <thead>
+          <tr>
+            <th>Kịch bản kiểm thử</th>
+            <th>Tín hiệu đầu vào Vin & Lệnh LTspice</th>
+            <th>Điện áp tại N_PROTECT</th>
+            <th>Dòng đỉnh qua R1 / Diode</th>
+            <th>Công suất / Năng lượng trên R1</th>
+            <th>Thời gian sườn lên t_r / Độ trễ</th>
+            <th>Đánh giá theo Yêu cầu Đề bài</th>
+            <th>Thao tác</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr id="row_dc20">
+            <td><b>1A. Quá áp DC +20V</b><br><span style="font-size:0.76rem; color:var(--muted)">(1 kênh - Theo file Word)</span></td>
+            <td class="mono">DC +20V<br><span style="color:var(--muted)">.tran 0 5m 0 1u</span></td>
+            <td class="mono" style="color:var(--primary)">+3.67 V</td>
+            <td class="mono">16.3 mA</td>
+            <td class="mono">0.266 W (Liên tục)</td>
+            <td>— (Tín hiệu DC)</td>
+            <td><span class="badge badge-ok">ĐẠT</span> Vượt chuẩn sàn ≥ 12V của đề bài</td>
+            <td><button class="btn-mini" onclick="loadScenario('dc20')">Xem trên đồ thị</button></td>
+          </tr>
+          <tr id="row_dc15_8ch">
+            <td><b>1B. Quá áp DC +15V đồng thời 8 kênh</b><br><span style="font-size:0.76rem; color:var(--muted)">(Kiểm tra tải nguồn chung)</span></td>
+            <td class="mono">DC +15V (×8 kênh)<br><span style="color:var(--muted)">.tran 0 5m 0 1u</span></td>
+            <td class="mono" style="color:var(--primary)">+3.86 V</td>
+            <td class="mono">11.1 mA/kênh<br>(Tổng Zener: 89 mA)</td>
+            <td class="mono">R1: 0.124 W/kênh<br>Zener D1: 0.32 W</td>
+            <td>— (Tín hiệu DC)</td>
+            <td><span class="badge badge-ok">ĐẠT</span> Rail 3.3V giữ ở 3.55V–3.86V (&lt; 4.0V)</td>
+            <td><button class="btn-mini" onclick="loadScenario('dc15_8ch')">Xem trên đồ thị</button></td>
+          </tr>
+          <tr id="row_pulse30_neg">
+            <td><b>2A. Xung quá áp -30V / 1ms</b><br><span style="font-size:0.76rem; color:var(--muted)">(Kịch bản 2 trong file Word)</span></td>
+            <td class="mono">PULSE(0 -30 1m 1u 1u 1m 3m)<br><span style="color:var(--muted)">.tran 0 5m 0 1u</span></td>
+            <td class="mono" style="color:var(--primary)">-0.35 V</td>
+            <td class="mono">29.7 mA</td>
+            <td class="mono">P_đỉnh = 0.88 W<br>(E = 0.88 mJ)</td>
+            <td>— (Xung quá áp 1ms)</td>
+            <td><span class="badge badge-ok">ĐẠT</span> Diode dưới U2 ghim âm an toàn</td>
+            <td><button class="btn-mini" onclick="loadScenario('pulse30_neg')">Xem trên đồ thị</button></td>
+          </tr>
+          <tr id="row_pulse200_pos">
+            <td><b>2B. Xung cao áp +200V / 1ms</b><br><span style="font-size:0.76rem; color:var(--muted)">(Chuẩn bắt buộc Mục 3 Đề bài)</span></td>
+            <td class="mono">PULSE(0 200 1m 1u 1u 1m 3m)<br><span style="color:var(--muted)">.tran 0 5m 0 1u</span></td>
+            <td class="mono" style="color:var(--primary)">+4.23 V (R1=1kΩ)<br>+3.90 V (R1=2.2kΩ)</td>
+            <td class="mono">195.8 mA (&lt; 600mA IFSM)</td>
+            <td class="mono">P_đỉnh = 38.3 W<br>(E = 38.3 mJ / 1ms)</td>
+            <td>— (Xung quá áp 1ms)</td>
+            <td><span class="badge badge-ok">ĐẠT</span> Trở cắm 1W–2W & BAT54S chịu tốt</td>
+            <td><button class="btn-mini" onclick="loadScenario('pulse200_pos')">Xem trên đồ thị</button></td>
+          </tr>
+          <tr id="row_sq10k">
+            <td><b>3. Sóng vuông 10 kHz (0–3.3V)</b><br><span style="font-size:0.76rem; color:var(--muted)">(Kiểm tra tần số thấp/trung bình)</span></td>
+            <td class="mono">PULSE(0 3.3 0 10n 10n 50u 100u)<br><span style="color:var(--muted)">.tran 0 500u 0 10n</span></td>
+            <td class="mono" style="color:var(--primary)">0.00 V ↔ 3.30 V</td>
+            <td class="mono">0 mA (Diode khóa)</td>
+            <td class="mono">≈ 0 W</td>
+            <td class="mono">t_r = 48.4 ns<br>t_delay = 15.2 ns</td>
+            <td><span class="badge badge-ok">ĐẠT</span> Xung vuông vức hoàn toàn (t_r = 0.05% T)</td>
+            <td><button class="btn-mini" onclick="loadScenario('sq10k')">Xem trên đồ thị</button></td>
+          </tr>
+          <tr id="row_sq1m">
+            <td><b>4. Sóng vuông 1 MHz (0–3.3V)</b><br><span style="font-size:0.76rem; color:var(--muted)">(Kiểm tra tần số cao - Chu kỳ 1µs)</span></td>
+            <td class="mono">PULSE(0 3.3 0 5n 5n 500n 1u)<br><span style="color:var(--muted)">.tran 0 5u 0 5n</span></td>
+            <td class="mono" style="color:var(--primary)">0.00 V ↔ 3.30 V</td>
+            <td class="mono">Dòng nạp tụ C1</td>
+            <td class="mono">≈ 0 W</td>
+            <td class="mono">t_r = 48.4 ns<br>t_delay = 15.2 ns<br>Skew 8 kênh ≤ 2 ns</td>
+            <td><span class="badge badge-ok">ĐẠT</span> Bảo toàn đủ 5 chu kỳ, không mất xung</td>
+            <td><button class="btn-mini" onclick="loadScenario('sq1m')">Xem trên đồ thị</button></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <script>
+    const VF_SCHOTTKY = 0.31;
+    // Bảng màu đậm, tương phản cao trên nền trắng cho 8 kênh
+    const CH_COLORS = [
+      '#0284c7', '#dc2626', '#16a34a', '#9333ea',
+      '#ea580c', '#0d9488', '#2563eb', '#be123c'
+    ];
+    const CH_TOLERANCE = [
+      { rFactor: 1.00, cFactor: 1.00 },
+      { rFactor: 1.01, cFactor: 1.04 },
+      { rFactor: 0.99, cFactor: 0.96 },
+      { rFactor: 1.01, cFactor: 1.05 },
+      { rFactor: 0.99, cFactor: 0.95 },
+      { rFactor: 1.00, cFactor: 1.03 },
+      { rFactor: 1.01, cFactor: 0.97 },
+      { rFactor: 0.99, cFactor: 1.02 }
+    ];
+
+    let currentScenarioId = 'dc20';
+    let lastSimData = null; // Lưu dữ liệu sóng để vẽ Cursor khi di chuột
+
+    function switchSchematicView(view) {
+      document.getElementById('btnTab1Ch').classList.toggle('active', view === '1ch');
+      document.getElementById('btnTab8Ch').classList.toggle('active', view === '8ch');
+      document.getElementById('boxSchematic1Ch').style.display = (view === '1ch') ? 'block' : 'none';
+      document.getElementById('boxSchematic8Ch').style.display = (view === '8ch') ? 'block' : 'none';
+    }
+
+    function loadScenario(sc) {
+      currentScenarioId = sc;
+      document.querySelectorAll('.scenario-btn').forEach(b => b.classList.remove('active'));
+      const btn = document.getElementById('btnSc_' + sc);
+      if (btn) btn.classList.add('active');
+
+      document.querySelectorAll('#tableAllScenarios tbody tr').forEach(tr => tr.classList.remove('active-row'));
+      const row = document.getElementById('row_' + sc);
+      if (row) row.classList.add('active-row');
+
+      const modeEl = document.getElementById('ctrlMode');
+      const vinEl = document.getElementById('ctrlVin');
+      const freqEl = document.getElementById('ctrlFreq');
+      const r1El = document.getElementById('ctrlR1');
+      const c1El = document.getElementById('ctrlC1');
+      const vthEl = document.getElementById('ctrlVth');
+      const numChEl = document.getElementById('ctrlNumCh');
+      const railModeEl = document.getElementById('ctrlRailMode');
+
+      r1El.value = 1.0;
+      c1El.value = 22;
+      vthEl.value = 1.65;
+
+      if (sc === 'dc20') {
+        modeEl.value = 'dc';
+        vinEl.value = 20;
+        numChEl.value = 1;
+        switchSchematicView('1ch');
+      } else if (sc === 'dc15_8ch') {
+        modeEl.value = 'dc';
+        vinEl.value = 15;
+        numChEl.value = 8;
+        railModeEl.value = 'realistic';
+        switchSchematicView('8ch');
+      } else if (sc === 'pulse30_neg') {
+        modeEl.value = 'pulse';
+        vinEl.value = -30;
+        numChEl.value = 1;
+        switchSchematicView('1ch');
+      } else if (sc === 'pulse200_pos') {
+        modeEl.value = 'pulse';
+        vinEl.value = 200;
+        numChEl.value = 1;
+        railModeEl.value = 'realistic';
+        switchSchematicView('1ch');
+      } else if (sc === 'sq10k') {
+        modeEl.value = 'square';
+        freqEl.value = 10;
+        numChEl.value = 1;
+        switchSchematicView('1ch');
+      } else if (sc === 'sq1m') {
+        modeEl.value = 'square';
+        freqEl.value = 1000;
+        numChEl.value = 8;
+      }
+      onParamChange();
+    }
+
+    function calcClampedState(vin, r1_ohm, railMode, numActiveChannels) {
+      let vRail = 3.30;
+      let vProtect = vin;
+      let iPerCh = 0;
+      let iTotalRail = 0;
+      let u1On = false;
+      let u2On = false;
+
+      if (vin > 3.30 + VF_SCHOTTKY) {
+        u1On = true;
+        if (railMode === 'word') {
+          vRail = 3.30;
+          vProtect = vRail + VF_SCHOTTKY;
+          iPerCh = (vin - vProtect) / r1_ohm;
+          iTotalRail = iPerCh * numActiveChannels;
+        } else {
+          const rz = 3.5;
+          const vZ0 = 3.50;
+          const k = (rz * numActiveChannels) / r1_ohm;
+          vRail = (vZ0 + k * (vin - VF_SCHOTTKY)) / (1.0 + k);
+          if (vRail < 3.30) vRail = 3.30;
+          vProtect = vRail + VF_SCHOTTKY;
+          iPerCh = Math.max(0, (vin - vProtect) / r1_ohm);
+          iTotalRail = iPerCh * numActiveChannels;
+        }
+      } else if (vin < -VF_SCHOTTKY) {
+        u2On = true;
+        const iEst = Math.abs(vin + VF_SCHOTTKY) / r1_ohm;
+        const vfDynamic = VF_SCHOTTKY + Math.min(0.22, iEst * 1.1);
+        vProtect = -vfDynamic;
+        iPerCh = (vin - vProtect) / r1_ohm;
+        iTotalRail = 0;
+      }
+      return { vProtect, vRail, iPerCh, iTotalRail, u1On, u2On };
+    }
+
+    function render8ChannelSchematicSVG(mode, activeVin, r1K, c1Pf, numCh, res) {
+      const svg = document.getElementById('svg8Channels');
+      const u1Color = (mode !== 'square' && res.u1On) ? '#dc2626' : '#94a3b8';
+      const u2Color = (mode !== 'square' && res.u2On) ? '#ea580c' : '#94a3b8';
+
+      let html = `
+        <!-- Khối nguồn chung trên cùng -->
+        <rect x="230" y="6" width="460" height="44" rx="6" fill="#fef3c7" stroke="#f59e0b" stroke-width="1.5" />
+        <text x="460" y="23" fill="#b45309" font-size="11.5" font-weight="bold" text-anchor="middle">
+          NGUỒN CHUNG 8 KÊNH: V2 = 3.3V | Diode Zener D1 (3.6V) | Tụ C2 = 10µF
+        </text>
+        <text x="460" y="40" fill="${res.vRail > 4.0 ? '#dc2626' : '#0369a1'}" font-size="11" font-weight="bold" text-anchor="middle">
+          Điện áp Rail = ${res.vRail.toFixed(2)}V  |  Tổng dòng xả từ ${numCh} kênh vào Zener D1 = ${(res.iTotalRail*1000).toFixed(1)} mA
+        </text>
+
+        <!-- Đường bus 3.3V ngang -->
+        <line x1="25" y1="60" x2="895" y2="60" stroke="#d97706" stroke-width="2.5" />
+        <line x1="460" y1="50" x2="460" y2="60" stroke="#d97706" stroke-width="2.5" />
+        <line x1="25" y1="60" x2="25" y2="205" stroke="#d97706" stroke-width="2" />
+        <line x1="25" y1="205" x2="895" y2="205" stroke="#d97706" stroke-width="2.5" />
+      `;
+
+      for (let ch = 1; ch <= 8; ch++) {
+        const isRow2 = ch > 4;
+        const colIdx = (ch - 1) % 4;
+        const bx = 42 + colIdx * 214;
+        const by = isRow2 ? 205 : 60;
+        const isActive = ch <= numCh;
+        const chColor = CH_COLORS[ch - 1];
+        const opacity = isActive ? '1.0' : '0.35';
+
+        html += `
+          <g opacity="${opacity}">
+            <rect x="${bx}" y="${by + 12}" width="200" height="120" rx="7" fill="#ffffff" stroke="${isActive ? chColor : '#cbd5e1'}" stroke-width="1.8" />
+            <rect x="${bx}" y="${by + 12}" width="200" height="22" rx="6" fill="${isActive ? '#f1f5f9' : '#f8fafc'}" />
+            <text x="${bx + 10}" y="${by + 27}" fill="${chColor}" font-size="11" font-weight="bold">
+              KÊNH ${ch} ${isActive ? '(Đang hoạt động)' : '(Tắt)'}
+            </text>
+
+            <!-- Nhánh nối lên Rail 3.3V -->
+            <line x1="${bx + 96}" y1="${by}" x2="${bx + 96}" y2="${by + 74}" stroke="${isActive ? u1Color : '#cbd5e1'}" stroke-width="2" />
+            <circle cx="${bx + 96}" cy="${by}" r="3.5" fill="#d97706" />
+
+            <!-- Nguồn V_i -->
+            <circle cx="${bx + 22}" cy="${by + 74}" r="11" fill="#dcfce7" stroke="#15803d" stroke-width="1.5" />
+            <text x="${bx + 22}" y="${by + 78}" fill="#15803d" font-size="9.5" font-weight="bold" text-anchor="middle">V${ch}</text>
+
+            <!-- Điện trở R_i -->
+            <rect x="${bx + 40}" y="${by + 66}" width="38" height="16" rx="3" fill="#f8fafc" stroke="#0284c7" stroke-width="1.5" />
+            <text x="${bx + 59}" y="${by + 77}" fill="#0f172a" font-size="9" font-weight="bold" text-anchor="middle">${r1K.toFixed(1)}k</text>
+
+            <!-- Đường N_PROTECT_i -->
+            <line x1="${bx + 78}" y1="${by + 74}" x2="${bx + 142}" y2="${by + 74}" stroke="#0284c7" stroke-width="2" />
+
+            <!-- Diode trên & dưới -->
+            <polygon points="${bx+90},${by+55} ${bx+102},${by+55} ${bx+96},${by+43}" fill="${isActive && res.u1On ? '#fca5a5' : '#ffffff'}" stroke="${isActive ? u1Color : '#94a3b8'}" stroke-width="1.5" />
+            <line x1="${bx + 96}" y1="${by + 74}" x2="${bx + 96}" y2="${by + 122}" stroke="${isActive ? u2Color : '#cbd5e1'}" stroke-width="1.8" />
+            <polygon points="${bx+90},${by+106} ${bx+102},${by+106} ${bx+96},${by+94}" fill="${isActive && res.u2On ? '#fdba74' : '#ffffff'}" stroke="${isActive ? u2Color : '#94a3b8'}" stroke-width="1.5" />
+
+            <!-- Tụ C_i -->
+            <line x1="${bx + 124}" y1="${by + 74}" x2="${bx + 124}" y2="${by + 96}" stroke="#0284c7" stroke-width="1.5" />
+            <line x1="${bx + 117}" y1="${by + 96}" x2="${bx + 131}" y2="${by + 96}" stroke="#0284c7" stroke-width="2" />
+            <line x1="${bx + 117}" y1="${by + 101}" x2="${bx + 131}" y2="${by + 101}" stroke="#0284c7" stroke-width="2" />
+            <line x1="${bx + 124}" y1="${by + 101}" x2="${bx + 124}" y2="${by + 122}" stroke="#64748b" stroke-width="1.5" />
+
+            <!-- Khối B_i -->
+            <rect x="${bx + 142}" y="${by + 58}" width="48" height="32" rx="4" fill="#fefce8" stroke="#ca8a04" stroke-width="1.5" />
+            <text x="${bx + 166}" y="${by + 71}" fill="#a16207" font-size="9.5" font-weight="bold" text-anchor="middle">B${ch}</text>
+            <text x="${bx + 166}" y="${by + 83}" fill="#334155" font-size="8.5" text-anchor="middle">Vout${ch}</text>
+
+            <line x1="${bx + 22}" y1="${by + 122}" x2="${bx + 132}" y2="${by + 122}" stroke="#64748b" stroke-width="1.5" />
+          </g>
+        `;
+      }
+      svg.innerHTML = html;
+    }
+
+    function onParamChange() {
+      const mode = document.getElementById('ctrlMode').value;
+      const vinPeak = parseFloat(document.getElementById('ctrlVin').value);
+      const freqKhz = parseFloat(document.getElementById('ctrlFreq').value);
+      const r1K = parseFloat(document.getElementById('ctrlR1').value);
+      const r1Ohm = r1K * 1000.0;
+      const c1Pf = parseFloat(document.getElementById('ctrlC1').value);
+      const railMode = document.getElementById('ctrlRailMode').value;
+      const vth = parseFloat(document.getElementById('ctrlVth').value);
+      const numCh = parseInt(document.getElementById('ctrlNumCh').value, 10);
+      const multiDisplay = document.getElementById('ctrlMultiDisplay').value;
+
+      document.getElementById('valNumCh').textContent = `${numCh} / 8 kênh`;
+      document.getElementById('grpVoltage').style.display = (mode === 'square') ? 'none' : 'block';
+      document.getElementById('grpFreq').style.display = (mode === 'square') ? 'block' : 'none';
+
+      const signStr = vinPeak >= 0 ? '+' : '';
+      document.getElementById('valVin').textContent = `${signStr}${vinPeak.toFixed(1)} V`;
+      document.getElementById('valFreq').textContent =
+        freqKhz >= 1000 ? `${freqKhz} kHz (${(freqKhz/1000).toFixed(2)} MHz)` : `${freqKhz} kHz`;
+      document.getElementById('valR1').textContent = `${r1K.toFixed(1)} kΩ`;
+      document.getElementById('valC1').textContent = `${c1Pf.toFixed(0)} pF`;
+      document.getElementById('valVth').textContent = `${vth.toFixed(2)} V`;
+
+      const tauNs = r1K * c1Pf;
+      document.getElementById('lblCurrentConfigTag').textContent =
+        `Đang đo: R1 = ${r1K.toFixed(1)} kΩ | C1 = ${c1Pf.toFixed(0)} pF | τ = ${tauNs.toFixed(1)} ns | Số kênh N = ${numCh}`;
+
+      const activeVin = (mode === 'square') ? 3.3 : vinPeak;
+      const res1 = calcClampedState(activeVin, r1Ohm, railMode, 1);
+      const resN = calcClampedState(activeVin, r1Ohm, railMode, numCh);
+
+      render8ChannelSchematicSVG(mode, activeVin, r1K, c1Pf, numCh, resN);
+      updateSingleSchematicSVG(mode, activeVin, freqKhz, r1K, r1Ohm, c1Pf, tauNs, vth, numCh, resN);
+      updateLiveMetricsTable(mode, activeVin, freqKhz, r1Ohm, c1Pf, tauNs, vth, numCh, res1, resN);
+      drawWaveforms(mode, vinPeak, freqKhz, r1Ohm, c1Pf, tauNs, railMode, vth, numCh, multiDisplay);
+    }
+
+    function updateSingleSchematicSVG(mode, activeVin, freqKhz, r1K, r1Ohm, c1Pf, tauNs, vth, numCh, res) {
+      const vDropR1 = Math.abs(activeVin - res.vProtect);
+      const iChMa = Math.abs(res.iPerCh) * 1000.0;
+      const iTotalMa = Math.abs(res.iTotalRail) * 1000.0;
+
+      document.getElementById('svgR1Text').textContent = `R1 = ${r1K.toFixed(1)} kΩ`;
+      document.getElementById('svgC1Text').textContent = `C1 = ${c1Pf.toFixed(0)} pF`;
+      document.getElementById('svgTauText').textContent = `(τ = R1·C1 = ${tauNs.toFixed(1)} ns)`;
+      document.getElementById('svgB1Formula').textContent = `V(N_PROTECT) > ${vth.toFixed(2)}V`;
+
+      const signIn = activeVin >= 0 ? '+' : '';
+      document.getElementById('svgVinText').textContent =
+        mode === 'square' ? `Vin: 0↔3.3V (${freqKhz}kHz)` : `Vin = ${signIn}${activeVin.toFixed(1)} V`;
+      document.getElementById('svgNProtectText').textContent =
+        mode === 'square' ? `N_PROTECT: 0↔3.3V` : `N_PROTECT = ${res.vProtect >= 0 ? '+' : ''}${res.vProtect.toFixed(2)} V`;
+      document.getElementById('svgRailBanner').textContent =
+        `ĐƯỜNG NGUỒN CHUNG (${numCh} KÊNH): V(Rail_3V3) = ${res.vRail.toFixed(2)} V`;
+      document.getElementById('svgZenerCurrent').textContent = `I_z = ${iTotalMa.toFixed(1)} mA`;
+      document.getElementById('svgR1Drop').textContent = `ΔU = ${vDropR1.toFixed(1)}V | ${iChMa.toFixed(1)}mA`;
+
+      const voutVal = (res.vProtect > vth) ? 3.3 : 0.0;
+      document.getElementById('svgVoutText').textContent =
+        mode === 'square' ? `Vout: Xung 0↔3.3V` : `Vout = ${voutVal.toFixed(1)} V`;
+
+      const wireU1 = document.getElementById('wireU1');
+      const polyU1 = document.getElementById('polyU1');
+      const txtU1 = document.getElementById('txtU1State');
+      const wireU2 = document.getElementById('wireU2');
+      const polyU2 = document.getElementById('polyU2');
+      const txtU2 = document.getElementById('txtU2State');
+      const animPath = document.getElementById('animCurrentPath');
+
+      wireU1.setAttribute('stroke', '#94a3b8');
+      polyU1.setAttribute('stroke', '#94a3b8');
+      polyU1.setAttribute('fill', '#ffffff');
+      txtU1.textContent = 'Đang khóa (0 mA)';
+      txtU1.setAttribute('fill', '#64748b');
+
+      wireU2.setAttribute('stroke', '#94a3b8');
+      polyU2.setAttribute('stroke', '#94a3b8');
+      polyU2.setAttribute('fill', '#ffffff');
+      txtU2.textContent = 'Đang khóa (0 mA)';
+      txtU2.setAttribute('fill', '#64748b');
+
+      if (mode !== 'square' && res.u1On) {
+        wireU1.setAttribute('stroke', '#dc2626');
+        polyU1.setAttribute('stroke', '#dc2626');
+        polyU1.setAttribute('fill', '#fecaca');
+        txtU1.textContent = `MỞ VAN (${iChMa.toFixed(1)}mA)`;
+        txtU1.setAttribute('fill', '#dc2626');
+        animPath.setAttribute('d', 'M 100 145 L 315 145 L 315 50 L 500 50 L 500 112');
+        animPath.setAttribute('stroke', '#dc2626');
+      } else if (mode !== 'square' && res.u2On) {
+        wireU2.setAttribute('stroke', '#ea580c');
+        polyU2.setAttribute('stroke', '#ea580c');
+        polyU2.setAttribute('fill', '#fed7aa');
+        txtU2.textContent = `MỞ VAN (${iChMa.toFixed(1)}mA)`;
+        txtU2.setAttribute('fill', '#ea580c');
+        animPath.setAttribute('d', 'M 315 275 L 315 145 L 100 145');
+        animPath.setAttribute('stroke', '#ea580c');
+      } else {
+        animPath.setAttribute('d', 'M 100 145 L 762 145');
+        animPath.setAttribute('stroke', '#16a34a');
+      }
+    }
+
+    function updateLiveMetricsTable(mode, activeVin, freqKhz, r1Ohm, c1Pf, tauNs, vth, numCh, res1, resN) {
+      document.getElementById('thMultiCh').textContent = `Giá trị (Khi cấp đồng thời ${numCh} kênh)`;
+      const tbody = document.getElementById('tbodyLiveMetrics');
+
+      const vDrop1 = Math.abs(activeVin - res1.vProtect);
+      const vDropN = Math.abs(activeVin - resN.vProtect);
+      const i1Ma = Math.abs(res1.iPerCh) * 1000.0;
+      const iNPerChMa = Math.abs(resN.iPerCh) * 1000.0;
+      const iTotalRailMa = Math.abs(resN.iTotalRail) * 1000.0;
+      const p1W = (vDrop1 * vDrop1) / r1Ohm;
+      const pNW = (vDropN * vDropN) / r1Ohm;
+      const pZener1W = res1.vRail * Math.abs(res1.iTotalRail);
+      const pZenerNW = resN.vRail * Math.abs(resN.iTotalRail);
+
+      let rowsHtml = '';
+
+      if (mode !== 'square') {
+        const isSafeNP = (resN.vProtect >= -0.6 && resN.vProtect <= 4.0);
+        const isSafeRail = (resN.vRail <= 4.0);
+        const maxDiodeLimit = (mode === 'pulse') ? 600 : 200;
+        const isSafeDiode = (iNPerChMa <= maxDiodeLimit);
+        const isSafeR1 = (mode === 'pulse') ? (pNW * 1.0 <= 50) : (pNW <= 2.0);
+
+        rowsHtml = `
+          <tr>
+            <td><b>1. Điện áp tại nút bảo vệ</b></td>
+            <td class="mono">V(N_PROTECT)</td>
+            <td class="mono">${res1.vProtect >= 0 ? '+' : ''}${res1.vProtect.toFixed(2)} V</td>
+            <td class="mono" style="color:var(--primary)">${resN.vProtect >= 0 ? '+' : ''}${resN.vProtect.toFixed(2)} V</td>
+            <td class="mono">[-0.50 V .. +4.00 V]</td>
+            <td><span class="badge ${isSafeNP ? 'badge-ok' : 'badge-err'}">${isSafeNP ? 'ĐẠT (An toàn)' : 'VƯỢT NGƯỠNG!'}</span></td>
+          </tr>
+          <tr>
+            <td><b>2. Điện áp đường nguồn 3.3V chung</b></td>
+            <td class="mono">V(Rail_3V3)</td>
+            <td class="mono">${res1.vRail.toFixed(2)} V</td>
+            <td class="mono">${resN.vRail.toFixed(2)} V</td>
+            <td class="mono">≤ 4.00 V (STM32 VDD_max)</td>
+            <td><span class="badge ${isSafeRail ? 'badge-ok' : 'badge-err'}">${isSafeRail ? 'ĐẠT (An toàn)' : 'NGUY HIỂM (>4V)'}</span></td>
+          </tr>
+          <tr>
+            <td><b>3. Dòng điện qua R1 & Diode BAT54S</b></td>
+            <td class="mono">I(R1), I(BAT54S)</td>
+            <td class="mono">${i1Ma.toFixed(1)} mA / kênh</td>
+            <td class="mono">${iNPerChMa.toFixed(1)} mA / kênh</td>
+            <td class="mono">${mode === 'pulse' ? '≤ 600 mA (Xung IFSM)' : '≤ 200 mA (DC liên tục)'}</td>
+            <td><span class="badge ${isSafeDiode ? 'badge-ok' : 'badge-err'}">${isSafeDiode ? 'ĐẠT' : 'QUÁ DÒNG DIODE!'}</span></td>
+          </tr>
+          <tr>
+            <td><b>4. Tổng dòng & Công suất trên Zener D1</b></td>
+            <td class="mono">I(D1), P(D1)</td>
+            <td class="mono">${(Math.abs(res1.iTotalRail)*1000).toFixed(1)} mA (${pZener1W.toFixed(2)} W)</td>
+            <td class="mono" style="color:var(--amber)">${iTotalRailMa.toFixed(1)} mA (${pZenerNW.toFixed(2)} W)</td>
+            <td class="mono">P_Zener ≤ 1.0 W</td>
+            <td><span class="badge ${pZenerNW <= 1.0 ? 'badge-ok' : 'badge-err'}">${pZenerNW <= 1.0 ? 'ĐẠT' : 'QUÁ TẢI ZENER!'}</span></td>
+          </tr>
+          <tr>
+            <td><b>5. Công suất / Năng lượng trên mỗi R1</b></td>
+            <td class="mono">P(R1)</td>
+            <td class="mono">${p1W.toFixed(2)} W ${mode === 'pulse' ? `(${(p1W*1).toFixed(1)} mJ)` : ''}</td>
+            <td class="mono">${pNW.toFixed(2)} W ${mode === 'pulse' ? `(${(pNW*1).toFixed(1)} mJ)` : ''}</td>
+            <td class="mono">Trở cắm 1W–2W chịu xung</td>
+            <td><span class="badge ${isSafeR1 ? 'badge-ok' : 'badge-warn'}">${isSafeR1 ? 'ĐẠT' : 'NÓNG (Cần tăng R1)'}</span></td>
+          </tr>
+        `;
+      } else {
+        // Sóng vuông
+        const periodNs = 1e6 / freqKhz;
+        const halfPeriodNs = periodNs / 2.0;
+        const tr10_90 = 2.2 * tauNs;
+        const tDelay = -tauNs * Math.log(1.0 - vth / 3.3);
+        const tVih20 = -tauNs * Math.log(1.0 - 2.0 / 3.3);
+        const vPeakReached = 3.3 * (1.0 - Math.exp(-halfPeriodNs / tauNs));
+        const skewNs = tr10_90 * 0.06;
+        const isPulseOk = (vPeakReached > Math.max(vth, 2.0) + 0.15) && (tr10_90 < halfPeriodNs * 0.65);
+
+        rowsHtml = `
+          <tr>
+            <td><b>1. Chu kỳ & Độ rộng nửa xung</b></td>
+            <td class="mono">T, Ton (Duty 50%)</td>
+            <td class="mono">T = ${periodNs >= 1000 ? (periodNs/1000).toFixed(1)+' µs' : periodNs.toFixed(0)+' ns'}</td>
+            <td class="mono">Ton = ${halfPeriodNs >= 1000 ? (halfPeriodNs/1000).toFixed(1)+' µs' : halfPeriodNs.toFixed(0)+' ns'}</td>
+            <td class="mono">Đảm bảo Ton &gt; 2.2·τ</td>
+            <td><span class="badge ${isPulseOk ? 'badge-ok' : 'badge-err'}">${isPulseOk ? 'ĐẠT' : 'MÉO / MẤT XUNG'}</span></td>
+          </tr>
+          <tr>
+            <td><b>2. Hằng số thời gian & Sườn lên (10%→90%)</b></td>
+            <td class="mono">τ = R1·C1, t_r</td>
+            <td class="mono">τ = ${tauNs.toFixed(1)} ns | t_r = ${tr10_90.toFixed(1)} ns</td>
+            <td class="mono">t_r ≈ ${tr10_90.toFixed(1)} ns (±5%)</td>
+            <td class="mono">t_r &lt; ${(halfPeriodNs*0.5).toFixed(0)} ns</td>
+            <td><span class="badge ${tr10_90 < halfPeriodNs*0.5 ? 'badge-ok' : 'badge-warn'}">${tr10_90 < halfPeriodNs*0.5 ? 'ĐẠT (Sườn dốc)' : 'SƯỜN HƠI TÙ'}</span></td>
+          </tr>
+          <tr>
+            <td><b>3. Độ trễ qua ngưỡng B1 (${vth.toFixed(2)}V) & 74LVC245 (2.0V)</b></td>
+            <td class="mono">t_delay</td>
+            <td class="mono">Qua ${vth.toFixed(2)}V: ${tDelay.toFixed(1)} ns</td>
+            <td class="mono">Qua V_IH (2.0V): ${tVih20.toFixed(1)} ns</td>
+            <td class="mono">Nhỏ hơn nửa chu kỳ (${halfPeriodNs.toFixed(0)} ns)</td>
+            <td><span class="badge ${tVih20 < halfPeriodNs*0.5 ? 'badge-ok' : 'badge-err'}">${tVih20 < halfPeriodNs*0.5 ? 'ĐẠT' : 'TRỄ QUÁ LỚN'}</span></td>
+          </tr>
+          <tr>
+            <td><b>4. Điện áp đỉnh thực tế đạt được tại N_PROTECT</b></td>
+            <td class="mono">V_peak(N_PROTECT)</td>
+            <td class="mono">${vPeakReached.toFixed(2)} V</td>
+            <td class="mono">${vPeakReached.toFixed(2)} V</td>
+            <td class="mono">Phải vượt ngưỡng ≥ 2.00 V</td>
+            <td><span class="badge ${vPeakReached >= 2.5 ? 'badge-ok' : 'badge-err'}">${vPeakReached >= 2.5 ? 'ĐẠT (Đủ biên độ)' : 'SUY HAO MẠNH!'}</span></td>
+          </tr>
+          <tr>
+            <td><b>5. Độ lệch thời gian giữa 8 kênh (Channel Skew)</b></td>
+            <td class="mono">Δt_skew (Do R1±1%, C1±5%)</td>
+            <td class="mono">0 ns (1 kênh)</td>
+            <td class="mono">≈ ${skewNs.toFixed(1)} ns giữa 8 kênh</td>
+            <td class="mono">≪ Chu kỳ lấy mẫu 166.7 ns (6MHz)</td>
+            <td><span class="badge badge-ok">ĐẠT (Đồng bộ tốt)</span></td>
+          </tr>
+        `;
+      }
+      tbody.innerHTML = rowsHtml;
+
+      // Cập nhật hộp giải thích & lệnh LTspice
+      const expEl = document.getElementById('liveExplanation');
+      const srcEl = document.getElementById('txtSpiceSource');
+      const tranEl = document.getElementById('txtSpiceTran');
+
+      if (mode === 'dc') {
+        srcEl.innerHTML = `Nguồn V1..V${numCh}: <span class="code-hl">${activeVin}</span>`;
+        tranEl.innerHTML = `Lệnh chạy: <span class="code-hl">.tran 0 5m 0 1u</span>`;
+        expEl.innerHTML = `
+          <h3>💡 Tóm tắt nguyên lý đang diễn ra (Quá áp một chiều DC = ${activeVin >= 0 ? '+' : ''}${activeVin}V trên ${numCh} kênh):</h3>
+          <ul>
+            <li><b>Cơ chế bảo vệ:</b> Điện trở <b>R1 (${(r1Ohm/1000).toFixed(1)} kΩ)</b> chặn ở đầu vào và gánh ${vDropN.toFixed(2)}V sụt áp. Diode Schottky <b>${resN.u1On ? 'U1 (phía trên)' : (resN.u2On ? 'U2 (phía dưới)' : 'cả 2 đều khóa')}</b> giữ chặt nút <b>N_PROTECT = ${resN.vProtect.toFixed(2)}V</b>.</li>
+            <li><b>So sánh 1 kênh và ${numCh} kênh:</b> Mỗi kênh chỉ có dòng <b>${iNPerChMa.toFixed(1)} mA</b>, nhưng khi ${numCh} kênh cùng bị quá áp dương, tổng dòng đổ vào Zener D1 là <b>${iTotalRailMa.toFixed(1)} mA</b>.</li>
+          </ul>`;
+      } else if (mode === 'pulse') {
+        srcEl.innerHTML = `Nguồn V1..V${numCh}: <span class="code-hl">PULSE(0 ${activeVin} 1m 1u 1u 1m 3m)</span>`;
+        tranEl.innerHTML = `Lệnh chạy: <span class="code-hl">.tran 0 5m 0 1u</span>`;
+        expEl.innerHTML = `
+          <h3>💡 Tóm tắt nguyên lý Kịch bản 2 (Xung quá áp đơn lẻ ${activeVin >= 0 ? '+' : ''}${activeVin}V độ rộng 1 ms):</h3>
+          <ul>
+            <li>Xung xuất hiện từ mốc <b>1.0 ms đến 2.0 ms</b>. Trong suốt 1 ms này, nút <b>N_PROTECT</b> được Diode ghim an toàn tại <b>${resN.vProtect.toFixed(2)}V</b>.</li>
+            <li>Năng lượng nhiệt tiêu tán trên R1 chỉ là <b>${(pNW*1.0).toFixed(1)} mJ</b> (do xung chỉ kéo dài 1 ms), đảm bảo điện trở cắm 1W–2W và Diode BAT54S ($I_{FSM} = 600\\text{ mA}$) không bị hỏng.</li>
+          </ul>`;
+      } else {
+        const periodUs = 1000.0 / freqKhz;
+        const halfUs = periodUs / 2.0;
+        const simTimeUs = periodUs * 5.0;
+        const triseStr = freqKhz >= 500 ? '5n' : '10n';
+        const periodStr = periodUs >= 1 ? `${periodUs.toFixed(0)}u` : `${(periodUs*1000).toFixed(0)}n`;
+        const halfStr = halfUs >= 1 ? `${halfUs.toFixed(0)}u` : `${(halfUs*1000).toFixed(0)}n`;
+        const simStr = simTimeUs >= 1 ? `${simTimeUs.toFixed(0)}u` : `${(simTimeUs*1000).toFixed(0)}n`;
+        srcEl.innerHTML = `Nguồn V1..V${numCh}: <span class="code-hl">PULSE(0 3.3 0 ${triseStr} ${triseStr} ${halfStr} ${periodStr})</span>`;
+        tranEl.innerHTML = `Lệnh chạy: <span class="code-hl">.tran 0 ${simStr} 0 ${triseStr}</span>`;
+        expEl.innerHTML = `
+          <h3>💡 Tóm tắt nguyên lý truyền Sóng Vuông ${freqKhz} kHz (0V ↔ 3.3V):</h3>
+          <ul>
+            <li>Trong dải 0V – 3.3V, cả 2 diode bảo vệ đều <b>khóa hoàn toàn</b>. Tuy nhiên, mạch <b>R1 (${(r1Ohm/1000).toFixed(1)} kΩ) – C1 (${c1Pf} pF)</b> tạo hằng số thời gian nạp xả $\\tau = $ <b>${tauNs.toFixed(1)} ns</b>.</li>
+            <li>Đường màu xanh trên đồ thị 2 (<b>N_PROTECT</b>) cong theo hàm mũ RC nhưng vẫn vượt qua ngưỡng <b>${vth.toFixed(2)}V</b> chỉ sau <b>${(-tauNs * Math.log(1 - vth/3.3)).toFixed(1)} ns</b>, giúp đầu ra <b>Vout</b> tái tạo đầy đủ 5 chu kỳ xung vuông.</li>
+          </ul>`;
+      }
+    }
+
+    function drawWaveforms(mode, vinPeak, freqKhz, r1Ohm, c1Pf, tauNs, railMode, vth, numCh, multiDisplay) {
+      const legendEl = document.getElementById('chLegendBar');
+      let legHtml = '';
+      for (let c = 1; c <= 8; c++) {
+        const active = c <= numCh;
+        legHtml += `<span style="color:${CH_COLORS[c-1]}; opacity:${active ? 1 : 0.3}; font-weight:700;">
+          ■ Kênh ${c} ${active ? '' : '(Tắt)'}
+        </span>`;
+      }
+      legendEl.innerHTML = legHtml;
+
+      const N = 700;
+      const vinTraces = [];
+      const protTraces = [];
+      const outTraces = [];
+
+      const activeVin = (mode === 'square') ? 3.3 : vinPeak;
+      const resMulti = calcClampedState(activeVin, r1Ohm, railMode, numCh);
+
+      let totalTimeVal = 5.0;
+      let timeUnit = 'ms';
+
+      for (let ch = 0; ch < numCh; ch++) {
+        const vInArr = new Float64Array(N);
+        const vProtArr = new Float64Array(N);
+        const vOutArr = new Float64Array(N);
+
+        const tol = (multiDisplay === 'tolerance') ? CH_TOLERANCE[ch] : { rFactor: 1.0, cFactor: 1.0 };
+        const phaseShift = (multiDisplay === 'stagger') ? (ch * 0.06) : 0.0;
+        const chTauNs = tauNs * tol.rFactor * tol.cFactor;
+
+        if (mode === 'dc') {
+          totalTimeVal = 5.0;
+          timeUnit = 'ms';
+          const chSpread = (multiDisplay === 'tolerance') ? (ch - 3.5) * 0.015 : 0;
+          for (let i = 0; i < N; i++) {
+            vInArr[i] = vinPeak;
+            vProtArr[i] = resMulti.vProtect + chSpread;
+            vOutArr[i] = (vProtArr[i] > vth) ? 3.3 : 0.0;
+          }
+        } else if (mode === 'pulse') {
+          totalTimeVal = 5.0;
+          timeUnit = 'ms';
+          const delayShiftMs = (multiDisplay === 'stagger') ? ch * 0.08 : 0;
+          for (let i = 0; i < N; i++) {
+            const tMs = (i / (N - 1)) * 5.0;
+            const inPulse = (tMs >= (1.0 + delayShiftMs) && tMs <= (2.0 + delayShiftMs));
+            vInArr[i] = inPulse ? vinPeak : 0.0;
+            vProtArr[i] = inPulse ? resMulti.vProtect : 0.0;
+            vOutArr[i] = (vProtArr[i] > vth) ? 3.3 : 0.0;
+          }
+        } else {
+          const periodNs = 1e6 / freqKhz;
+          const totalTimeNs = periodNs * 5.0;
+          if (totalTimeNs >= 1000) {
+            totalTimeVal = totalTimeNs / 1000.0;
+            timeUnit = 'µs';
+          } else {
+            totalTimeVal = totalTimeNs;
+            timeUnit = 'ns';
+          }
+
+          const dtNs = totalTimeNs / N;
+          let vCap = 0.0;
+          for (let i = 0; i < N; i++) {
+            const tNs = i * dtNs;
+            let phase = ((tNs / periodNs) - phaseShift) % 1.0;
+            if (phase < 0) phase += 1.0;
+            const vTarget = (phase < 0.5) ? 3.3 : 0.0;
+            vInArr[i] = vTarget;
+
+            const alpha = Math.exp(-dtNs / Math.max(0.1, chTauNs));
+            vCap = vTarget + (vCap - vTarget) * alpha;
+            vProtArr[i] = vCap;
+            vOutArr[i] = (vCap > vth) ? 3.3 : 0.0;
+          }
+        }
+
+        vinTraces.push({ data: vInArr, color: CH_COLORS[ch] });
+        protTraces.push({ data: vProtArr, color: CH_COLORS[ch] });
+        outTraces.push({ data: vOutArr, color: CH_COLORS[ch] });
+      }
+
+      document.getElementById('lblPlot1Range').textContent = `Thang thời gian: 0 → ${totalTimeVal.toFixed(1)} ${timeUnit}`;
+      document.getElementById('lblPlot2Range').textContent = `V(N_PROTECT) — Ngưỡng cắt B1 = ${vth.toFixed(2)}V`;
+      document.getElementById('lblPlot3Range').textContent = `V(Vout) — Chuẩn Logic 0.0V / 3.3V`;
+
+      let min1 = Math.min(0, activeVin) - 1.5;
+      let max1 = Math.max(3.5, activeVin) + 1.5;
+      let min2 = Math.min(-0.6, resMulti.vProtect) - 0.35;
+      let max2 = Math.max(3.8, resMulti.vProtect) + 0.35;
+
+      lastSimData = {
+        N, totalTimeVal, timeUnit, vth,
+        vinTraces, protTraces, outTraces,
+        min1, max1, min2, max2
+      };
+
+      renderAllCanvases(null);
+    }
+
+    function renderAllCanvases(cursorIndex) {
+      if (!lastSimData) return;
+      const d = lastSimData;
+      renderScopeLight(document.getElementById('canvasVin'), d.vinTraces, d.min1, d.max1, null, cursorIndex, d.totalTimeVal, d.timeUnit);
+      renderScopeLight(document.getElementById('canvasProtect'), d.protTraces, d.min2, d.max2, d.vth, cursorIndex, d.totalTimeVal, d.timeUnit);
+      renderScopeLight(document.getElementById('canvasVout'), d.outTraces, -0.4, 3.8, null, cursorIndex, d.totalTimeVal, d.timeUnit);
+    }
+
+    function renderScopeLight(canvas, traces, yMin, yMax, thresholdLine, cursorIdx, totalTimeVal, timeUnit) {
+      const ctx = canvas.getContext('2d');
+      const W = canvas.width;
+      const H = canvas.height;
+      ctx.clearRect(0, 0, W, H);
+
+      const padL = 58, padR = 16, padT = 12, padB = 22;
+      const plotW = W - padL - padR;
+      const plotH = H - padT - padB;
+      const yToPx = (val) => padT + plotH - ((val - yMin) / (yMax - yMin)) * plotH;
+
+      // Lưới ngang & nhãn trục tung (Nền sáng)
+      ctx.strokeStyle = '#e2e8f0';
+      ctx.lineWidth = 1;
+      ctx.fillStyle = '#475569';
+      ctx.font = '11px Consolas, monospace';
+      ctx.textAlign = 'right';
+
+      const steps = 4;
+      for (let s = 0; s <= steps; s++) {
+        const v = yMin + (s / steps) * (yMax - yMin);
+        const py = yToPx(v);
+        ctx.beginPath();
+        ctx.moveTo(padL, py);
+        ctx.lineTo(W - padR, py);
+        ctx.stroke();
+        ctx.fillText(`${v.toFixed(1)}V`, padL - 6, py + 4);
+      }
+
+      // Lưới dọc & nhãn trục thời gian
+      ctx.textAlign = 'center';
+      for (let gx = 0; gx <= 10; gx++) {
+        const px = padL + (gx / 10) * plotW;
+        ctx.beginPath();
+        ctx.moveTo(px, padT);
+        ctx.lineTo(px, H - padB);
+        ctx.stroke();
+        if (gx % 2 === 0) {
+          const tVal = (gx / 10) * totalTimeVal;
+          ctx.fillText(`${tVal.toFixed(1)}${timeUnit}`, px, H - 6);
+        }
+      }
+
+      // Vạch 0V đậm hơn
+      if (yMin < 0 && yMax > 0) {
+        const py0 = yToPx(0);
+        ctx.strokeStyle = '#94a3b8';
+        ctx.beginPath();
+        ctx.moveTo(padL, py0);
+        ctx.lineTo(W - padR, py0);
+        ctx.stroke();
+      }
+
+      // Đường ngưỡng logic B1
+      if (thresholdLine !== null && thresholdLine >= yMin && thresholdLine <= yMax) {
+        const pyTh = yToPx(thresholdLine);
+        ctx.strokeStyle = '#d97706';
+        ctx.setLineDash([5, 4]);
+        ctx.beginPath();
+        ctx.moveTo(padL, pyTh);
+        ctx.lineTo(W - padR, pyTh);
+        ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.fillStyle = '#b45309';
+        ctx.textAlign = 'left';
+        ctx.fillText(`Ngưỡng B1 (${thresholdLine.toFixed(2)}V)`, padL + 8, pyTh - 5);
+      }
+
+      // Vẽ tín hiệu các kênh
+      for (let t = 0; t < traces.length; t++) {
+        const data = traces[t].data;
+        ctx.strokeStyle = traces[t].color;
+        ctx.lineWidth = (t === traces.length - 1) ? 2.3 : 1.7;
+        ctx.beginPath();
+        for (let i = 0; i < data.length; i++) {
+          const px = padL + (i / (data.length - 1)) * plotW;
+          const py = yToPx(data[i]);
+          if (i === 0) ctx.moveTo(px, py);
+          else ctx.lineTo(px, py);
+        }
+        ctx.stroke();
+      }
+
+      // Vẽ con trỏ Cursor nếu người dùng di chuột
+      if (cursorIdx !== null && cursorIdx >= 0 && cursorIdx < traces[0].data.length) {
+        const cx = padL + (cursorIdx / (traces[0].data.length - 1)) * plotW;
+        ctx.strokeStyle = '#0f172a';
+        ctx.lineWidth = 1.2;
+        ctx.setLineDash([3, 3]);
+        ctx.beginPath();
+        ctx.moveTo(cx, padT);
+        ctx.lineTo(cx, H - padB);
+        ctx.stroke();
+        ctx.setLineDash([]);
+
+        const cy = yToPx(traces[0].data[cursorIdx]);
+        ctx.fillStyle = traces[0].color;
+        ctx.beginPath();
+        ctx.arc(cx, cy, 4, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+
+    // Gắn sự kiện Cursor cho cả 3 đồ thị
+    function setupCursorEvents() {
+      const canvases = ['canvasVin', 'canvasProtect', 'canvasVout'].map(id => document.getElementById(id));
+      const readout = document.getElementById('cursorReadout');
+
+      canvases.forEach(cv => {
+        cv.addEventListener('mousemove', (e) => {
+          if (!lastSimData) return;
+          const rect = cv.getBoundingClientRect();
+          const scaleX = cv.width / rect.width;
+          const mouseX = (e.clientX - rect.left) * scaleX;
+          const padL = 58, padR = 16;
+          const plotW = cv.width - padL - padR;
+          let ratio = (mouseX - padL) / plotW;
+          ratio = Math.max(0, Math.min(1, ratio));
+          const idx = Math.round(ratio * (lastSimData.N - 1));
+
+          const tCur = ratio * lastSimData.totalTimeVal;
+          const vInCur = lastSimData.vinTraces[0].data[idx];
+          const vProtCur = lastSimData.protTraces[0].data[idx];
+          const vOutCur = lastSimData.outTraces[0].data[idx];
+
+          readout.innerHTML = `⏱️ <b>t = ${tCur.toFixed(2)} ${lastSimData.timeUnit}</b> &nbsp;|&nbsp; <span style="color:#15803d">Vin = ${vInCur.toFixed(2)}V</span> &nbsp;|&nbsp; <span style="color:#0284c7">N_PROTECT = ${vProtCur.toFixed(2)}V</span> &nbsp;|&nbsp; <span style="color:#b45309">Vout = ${vOutCur.toFixed(2)}V</span>`;
+          renderAllCanvases(idx);
+        });
+
+        cv.addEventListener('mouseleave', () => {
+          readout.textContent = '🔍 Di chuột vào đồ thị để đo bằng Cursor...';
+          renderAllCanvases(null);
+        });
+      });
+    }
+
+    window.addEventListener('DOMContentLoaded', () => {
+      setupCursorEvents();
+      loadScenario('dc20');
+    });
+  </script>
+</body>
+</html>

@@ -1,0 +1,1289 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Mô Phỏng Trực Quan Kiến Trúc & Cấu Trúc Dữ Liệu Firmware Logic Analyzer (STM32F401)</title>
+  <style>
+    :root {
+      --bg: #f1f5f9;
+      --card: #ffffff;
+      --card-alt: #f8fafc;
+      --border: #cbd5e1;
+      --border-light: #e2e8f0;
+      --text: #0f172a;
+      --text-secondary: #334155;
+      --muted: #64748b;
+      --primary: #0284c7;
+      --primary-bg: #e0f2fe;
+      --green: #15803d;
+      --green-bg: #dcfce7;
+      --amber: #b45309;
+      --amber-bg: #fef3c7;
+      --red: #b91c1c;
+      --red-bg: #fee2e2;
+      --purple: #6d28d9;
+      --purple-bg: #ede9fe;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.5;
+      padding: 20px;
+      max-width: 1520px;
+      margin: 0 auto;
+    }
+
+    header {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-top: 4px solid var(--primary);
+      border-radius: 10px;
+      padding: 16px 22px;
+      margin-bottom: 16px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 12px;
+      box-shadow: 0 1px 3px rgba(15, 23, 42, 0.05);
+    }
+    header h1 { font-size: 1.3rem; color: var(--text); margin-bottom: 4px; }
+    header p { font-size: 0.88rem; color: var(--text-secondary); }
+    .req-pill {
+      background: var(--primary-bg);
+      border: 1px solid #7dd3fc;
+      color: #0369a1;
+      padding: 8px 14px;
+      border-radius: 8px;
+      font-size: 0.82rem;
+      font-weight: 600;
+    }
+
+    .card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 16px;
+      box-shadow: 0 1px 3px rgba(15, 23, 42, 0.04);
+      margin-bottom: 16px;
+    }
+    .card-title {
+      font-size: 1rem;
+      font-weight: 700;
+      color: var(--text);
+      border-bottom: 1.5px solid var(--border-light);
+      padding-bottom: 10px;
+      margin-bottom: 14px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 10px;
+    }
+
+    /* Stepper / FSM Bar */
+    .fsm-bar {
+      display: grid;
+      grid-template-columns: repeat(6, 1fr);
+      gap: 8px;
+      margin-bottom: 14px;
+    }
+    @media (max-width: 1000px) {
+      .fsm-bar { grid-template-columns: repeat(3, 1fr); }
+    }
+    .fsm-step {
+      background: var(--card-alt);
+      border: 1.5px solid var(--border);
+      border-radius: 8px;
+      padding: 10px 12px;
+      cursor: pointer;
+      transition: all 0.15s ease;
+      position: relative;
+    }
+    .fsm-step:hover { border-color: var(--primary); background: #f8fafc; }
+    .fsm-step.active {
+      background: var(--primary-bg);
+      border-color: var(--primary);
+      box-shadow: 0 0 0 2px rgba(2, 132, 199, 0.2);
+    }
+    .fsm-step .st-num {
+      font-size: 0.72rem;
+      font-weight: 700;
+      color: var(--muted);
+      text-transform: uppercase;
+    }
+    .fsm-step.active .st-num { color: #0369a1; }
+    .fsm-step .st-name {
+      font-family: 'Consolas', monospace;
+      font-size: 0.88rem;
+      font-weight: 700;
+      color: var(--text);
+      margin: 2px 0;
+    }
+    .fsm-step .st-desc {
+      font-size: 0.75rem;
+      color: var(--text-secondary);
+    }
+
+    .btn-group {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+    .btn {
+      background: var(--primary);
+      color: #ffffff;
+      border: none;
+      padding: 7px 14px;
+      border-radius: 6px;
+      font-size: 0.83rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: opacity 0.15s;
+    }
+    .btn:hover { opacity: 0.9; }
+    .btn-outline {
+      background: #ffffff;
+      color: var(--text-secondary);
+      border: 1px solid var(--border);
+    }
+    .btn-outline:hover { border-color: var(--primary); color: var(--primary); }
+
+    /* Two-column layout */
+    .grid-2col {
+      display: grid;
+      grid-template-columns: 1.35fr 1fr;
+      gap: 16px;
+      align-items: start;
+    }
+    @media (max-width: 1150px) {
+      .grid-2col { grid-template-columns: 1fr; }
+    }
+
+    .svg-box {
+      background: #ffffff;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 10px;
+      overflow-x: auto;
+    }
+    svg.arch-svg {
+      width: 100%;
+      height: auto;
+      min-width: 720px;
+      display: block;
+    }
+
+    /* Tables */
+    .table-responsive { overflow-x: auto; }
+    table.data-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.83rem;
+      background: #ffffff;
+    }
+    table.data-table th, table.data-table td {
+      border: 1px solid var(--border);
+      padding: 7px 10px;
+      text-align: left;
+      vertical-align: middle;
+    }
+    table.data-table th {
+      background: #f1f5f9;
+      font-weight: 700;
+      color: var(--text);
+    }
+    table.data-table tr:nth-child(even) td { background: #f8fafc; }
+    .mono { font-family: 'Consolas', monospace; font-weight: 600; }
+
+    .badge {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 99px;
+      font-size: 0.74rem;
+      font-weight: 700;
+    }
+    .badge-ok { background: var(--green-bg); color: var(--green); border: 1px solid #86efac; }
+    .badge-warn { background: var(--amber-bg); color: var(--amber); border: 1px solid #fde047; }
+    .badge-err { background: var(--red-bg); color: var(--red); border: 1px solid #fca5a5; }
+    .badge-info { background: var(--primary-bg); color: #0369a1; border: 1px solid #7dd3fc; }
+    .badge-purple { background: var(--purple-bg); color: var(--purple); border: 1px solid #c4b5fd; }
+
+    /* Code explanation box */
+    .code-panel {
+      background: #f8fafc;
+      border: 1px solid var(--border);
+      border-left: 4px solid var(--primary);
+      border-radius: 6px;
+      padding: 12px 14px;
+      margin-top: 12px;
+      font-size: 0.86rem;
+    }
+    .code-panel h4 {
+      color: #0369a1;
+      margin-bottom: 6px;
+      font-size: 0.92rem;
+    }
+    pre.c-code {
+      background: #0f172a;
+      color: #e2e8f0;
+      padding: 10px 12px;
+      border-radius: 6px;
+      font-family: 'Consolas', monospace;
+      font-size: 0.8rem;
+      overflow-x: auto;
+      margin-top: 8px;
+      line-height: 1.45;
+    }
+    pre.c-code .cmt { color: #94a3b8; }
+    pre.c-code .kw { color: #38bdf8; font-weight: bold; }
+    pre.c-code .fn { color: #fde047; font-weight: bold; }
+    pre.c-code .reg { color: #4ade80; font-weight: bold; }
+
+    /* Byte & Buffer Struct Cards */
+    .packet-diagram {
+      display: flex;
+      gap: 4px;
+      flex-wrap: wrap;
+      margin: 8px 0 14px 0;
+    }
+    .byte-cell {
+      border: 1.5px solid var(--border);
+      border-radius: 6px;
+      padding: 6px 10px;
+      background: var(--card-alt);
+      text-align: center;
+      min-width: 92px;
+      flex: 1;
+    }
+    .byte-cell .b-idx { font-size: 0.72rem; color: var(--muted); font-weight: 600; }
+    .byte-cell .b-hex { font-family: 'Consolas', monospace; font-size: 0.95rem; font-weight: 700; margin: 2px 0; }
+    .byte-cell .b-name { font-size: 0.75rem; font-weight: 600; color: var(--text-secondary); }
+
+    .flow-anim {
+      stroke-dasharray: 8 6;
+      animation: dashFlow 0.7s linear infinite;
+    }
+    @keyframes dashFlow {
+      to { stroke-dashoffset: -28; }
+    }
+  </style>
+</head>
+<body>
+
+  <header>
+    <div>
+      <h1>MÔ PHỎNG TRỰC QUAN KIẾN TRÚC & CẤU TRÚC DỮ LIỆU FIRMWARE (STM32F401CCU6)</h1>
+      <p>Hiểu rõ cách phần cứng bên trong chip tự động bắt mẫu 6 MHz không tốn CPU, máy trạng thái FSM 6 bước và thuật toán xoay vòng bộ đệm 32 KB</p>
+    </div>
+    <div class="req-pill">
+      Code thực tế: firmware/Core/Src/la_core.c &amp; la_protocol.c | SRAM Buffer: 32.768 Bytes (50% RAM)
+    </div>
+  </header>
+
+  <!-- PHẦN 1: MÁY TRẠNG THÁI FSM 6 BƯỚC & SƠ ĐỒ KIẾN TRÚC KHỐI NGOẠI VI STM32 -->
+  <div class="card">
+    <div class="card-title">
+      <span>1️⃣ Mô Phỏng Hoạt Động Theo Từng Bước Của Máy Trạng Thái Firmware (FSM 6 Trạng Thái)</span>
+      <div class="btn-group">
+        <button class="btn btn-outline" onclick="prevFsmStep()">◀ Bước trước</button>
+        <button class="btn" onclick="nextFsmStep()">Bước tiếp theo ▶</button>
+        <button class="btn btn-outline" id="btnAutoPlay" onclick="toggleAutoPlay()">▶ Tự động chạy qua 6 bước</button>
+      </div>
+    </div>
+
+    <!-- Thanh 6 bước FSM -->
+    <div class="fsm-bar">
+      <div class="fsm-step active" id="fsmStep0" onclick="selectFsmStep(0)">
+        <div class="st-num">Bước 1 (State 0)</div>
+        <div class="st-name">LA_STATE_IDLE</div>
+        <div class="st-desc">Chờ lệnh 5 Bytes từ PC qua USB-CDC</div>
+      </div>
+      <div class="fsm-step" id="fsmStep1" onclick="selectFsmStep(1)">
+        <div class="st-num">Bước 2 (State 1)</div>
+        <div class="st-name">LA_STATE_ARMED</div>
+        <div class="st-desc">Nạp ARR cho TIM1, xóa cờ DMA2, khóa EXTI</div>
+      </div>
+      <div class="fsm-step" id="fsmStep2" onclick="selectFsmStep(2)">
+        <div class="st-num">Bước 3 (State 2)</div>
+        <div class="st-name">PRE_SAMPLING</div>
+        <div class="st-desc">TIM1+DMA2 ghi vòng chờ cờ Half-Transfer (≥20%)</div>
+      </div>
+      <div class="fsm-step" id="fsmStep3" onclick="selectFsmStep(3)">
+        <div class="st-num">Bước 4 (State 3)</div>
+        <div class="st-name">WAIT_TRIGGER</div>
+        <div class="st-desc">Mở ngắt EXTI đợi cạnh xung + Đếm SysTick Timeout</div>
+      </div>
+      <div class="fsm-step" id="fsmStep4" onclick="selectFsmStep(4)">
+        <div class="st-num">Bước 5 (State 4)</div>
+        <div class="st-name">POST_SAMPLING</div>
+        <div class="st-desc">Ngắt EXTI bật TIM2 đếm đúng 26.214 mẫu (80%)</div>
+      </div>
+      <div class="fsm-step" id="fsmStep5" onclick="selectFsmStep(5)">
+        <div class="st-num">Bước 6 (State 5)</div>
+        <div class="st-name">TRANSFERRING</div>
+        <div class="st-desc">Dừng TIM1, Xoay vòng mảng 32KB gửi lên PC</div>
+      </div>
+    </div>
+
+    <div class="grid-2col">
+      <!-- Sơ đồ khối Kiến trúc bên trong chip STM32F401 -->
+      <div>
+        <div class="svg-box">
+          <svg class="arch-svg" viewBox="0 0 820 390" id="svgHwArch">
+            <!-- Sẽ được cập nhật động theo từng bước FSM -->
+          </svg>
+        </div>
+
+        <div class="code-panel" id="fsmCodePanel">
+          <!-- Hiển thị giải thích & đoạn code C thực tế trong la_core.c -->
+        </div>
+      </div>
+
+      <!-- Bảng trạng thái Thanh ghi & Biến toàn cục trong RAM tại bước đang chọn -->
+      <div>
+        <div style="font-weight:700; font-size:0.92rem; margin-bottom:8px; color:var(--text);">
+          📋 Bảng Trạng Thái Thanh Ghi &amp; Biến Firmware Tại Bước Đang Chọn:
+        </div>
+        <div class="table-responsive">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>Thành phần / Biến C</th>
+                <th>Giá trị hiện tại</th>
+                <th>Ý nghĩa hoạt động</th>
+              </tr>
+            </thead>
+            <tbody id="tbodyFsmRegisters">
+              <!-- Tự động điền theo bước FSM -->
+            </tbody>
+          </table>
+        </div>
+
+        <!-- Minh họa 1 Byte mẫu = 8 kênh song song -->
+        <div style="margin-top:14px; background:var(--card-alt); border:1px solid var(--border); border-radius:8px; padding:12px;">
+          <div style="font-weight:700; font-size:0.88rem; margin-bottom:6px; color:#0369a1;">
+            💡 Tại sao 1 Byte trong mảng <code>la_capture_buffer[i]</code> lại lưu được cả 8 kênh cùng lúc?
+          </div>
+          <p style="font-size:0.8rem; color:var(--text-secondary); margin-bottom:8px;">
+            Vì cả 8 kênh đầu vào sau IC đệm đều nối vào 8 chân liên tiếp <b>PA0..PA7</b> thuộc cùng <b>Port A</b>. Mỗi nhịp TIM1, DMA2 đọc đúng 1 byte thấp của thanh ghi <code>GPIOA-&gt;IDR</code> (1 byte = 8 bit):
+          </p>
+          <div style="display:grid; grid-template-columns:repeat(8,1fr); gap:4px; text-align:center; font-family:Consolas,monospace; font-size:0.78rem;">
+            <div style="background:#e0f2fe; border:1px solid #0284c7; padding:5px 2px; border-radius:4px;"><b>Bit 7</b><br>PA7 (CH7)<br><span style="color:#15803d">1</span></div>
+            <div style="background:#f1f5f9; border:1px solid #cbd5e1; padding:5px 2px; border-radius:4px;"><b>Bit 6</b><br>PA6 (CH6)<br><span style="color:#64748b">0</span></div>
+            <div style="background:#e0f2fe; border:1px solid #0284c7; padding:5px 2px; border-radius:4px;"><b>Bit 5</b><br>PA5 (CH5)<br><span style="color:#15803d">1</span></div>
+            <div style="background:#f1f5f9; border:1px solid #cbd5e1; padding:5px 2px; border-radius:4px;"><b>Bit 4</b><br>PA4 (CH4)<br><span style="color:#64748b">0</span></div>
+            <div style="background:#f1f5f9; border:1px solid #cbd5e1; padding:5px 2px; border-radius:4px;"><b>Bit 3</b><br>PA3 (CH3)<br><span style="color:#64748b">0</span></div>
+            <div style="background:#e0f2fe; border:1px solid #0284c7; padding:5px 2px; border-radius:4px;"><b>Bit 2</b><br>PA2 (CH2)<br><span style="color:#15803d">1</span></div>
+            <div style="background:#f1f5f9; border:1px solid #cbd5e1; padding:5px 2px; border-radius:4px;"><b>Bit 1</b><br>PA1 (CH1)<br><span style="color:#64748b">0</span></div>
+            <div style="background:#dcfce7; border:1.5px solid #15803d; padding:5px 2px; border-radius:4px;"><b>Bit 0</b><br>PA0 (CH0)<br><span style="color:#15803d">1</span></div>
+          </div>
+          <div style="font-size:0.77rem; color:var(--muted); margin-top:6px;">
+            👉 Nhờ đọc cả 8 bit trong <b>cùng 1 chu kỳ xung nhịp bus AHB1</b>, độ lệch thời gian chốt mẫu giữa 8 kênh bằng <b>0 ns tuyệt đối</b>! Và 32.768 mẫu của cả 8 kênh chỉ tốn đúng <b>32.768 Bytes (32 KB RAM)</b>.
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- PHẦN 2: MÔ PHỎNG TƯƠNG TÁC CẤU TRÚC BỘ ĐỆM VÒNG 32KB & THUẬT TOÁN BUFFER UNROLLING -->
+  <div class="card">
+    <div class="card-title">
+      <span>2️⃣ Mô Phỏng Trực Quan Bộ Đệm Vòng <code>la_capture_buffer[32768]</code> &amp; Cơ Chế Xoay Vòng (Buffer Unrolling)</span>
+      <span class="badge badge-purple">Tại sao điểm Trigger luôn nằm cố định ở mẫu 6554 (20% Pre / 80% Post)?</span>
+    </div>
+
+    <div style="background:var(--card-alt); border:1px solid var(--border); border-radius:8px; padding:12px 16px; margin-bottom:14px;">
+      <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px; margin-bottom:6px;">
+        <label style="font-weight:700; font-size:0.9rem; color:var(--text);">
+          🎛️ Kéo thanh trượt để thử thay đổi Ô nhớ xảy ra sự kiện Trigger trong mảng <code>la_capture_buffer[0..32767]</code>:
+        </label>
+        <span class="mono" style="font-size:0.95rem; color:var(--red); background:#fee2e2; padding:3px 10px; border-radius:6px; border:1px solid #fca5a5;" id="lblTrigIndex">
+          Trigger xảy ra tại index = 28000
+        </span>
+      </div>
+      <input type="range" id="ctrlTrigIdx" min="0" max="32767" step="100" value="28000" oninput="updateUnrollSimulation()" style="width:100%; accent-color:var(--red); cursor:pointer;" />
+      <div style="font-size:0.8rem; color:var(--text-secondary); margin-top:4px;">
+        Hãy kéo thử! Bạn sẽ thấy: <b>Dù cạnh xung Trigger rơi vào bất kỳ ô nào trong RAM</b>, sau khi TIM2 đếm thêm <b>26.214 mẫu (80%)</b> và Firmware thực hiện <b>Buffer Unrolling</b> từ <code>write_pos</code>, điểm Trigger gửi lên PC <b>luôn luôn nằm cố định ở vị trí thứ 6554</b>!
+      </div>
+    </div>
+
+    <div class="grid-2col">
+      <!-- Hình vẽ Vòng tròn DMA vs Thanh thẳng sau khi Unroll -->
+      <div class="svg-box">
+        <svg class="arch-svg" viewBox="0 0 800 320" id="svgUnroll">
+          <!-- Vẽ bằng JS -->
+        </svg>
+      </div>
+
+      <!-- Bảng tính toán chỉ số con trỏ DMA & Unrolling -->
+      <div>
+        <div class="table-responsive">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>Thông số con trỏ bộ nhớ</th>
+                <th>Công thức trong Firmware</th>
+                <th>Giá trị tính toán</th>
+              </tr>
+            </thead>
+            <tbody id="tbodyUnrollMath">
+              <!-- Cập nhật bằng JS -->
+            </tbody>
+          </table>
+        </div>
+
+        <div class="code-panel" style="margin-top:12px;">
+          <h4>🔍 Giải thích tại sao lại tách thành Đoạn 1 và Đoạn 2 (Không cần tốn thêm 32KB RAM phụ):</h4>
+          <p style="font-size:0.82rem; color:var(--text-secondary);">
+            Chip STM32F401 chỉ có <b>64 KB RAM</b>, mà mảng <code>la_capture_buffer[32768]</code> đã chiếm đúng <b>32 KB (50%)</b>. Do đó Firmware <b>không thể tạo thêm 1 mảng 32 KB thứ hai</b> để sắp xếp lại dữ liệu. Thay vào đó, hàm <code>la_protocol_send_data_frame()</code> truyền trực tiếp từ mảng gốc qua USB thành 2 đoạn nối tiếp nhau:
+          </p>
+          <pre class="c-code"><span class="cmt">/* Đoạn 1: Truyền từ write_pos (Mẫu cũ nhất t_0) đến cuối mảng (32767) */</span>
+uint32_t len1 = <span class="reg">32768</span> - write_pos;
+send_in_512B_chunks(&amp;la_capture_buffer[write_pos], len1);
+
+<span class="cmt">/* Đoạn 2: Truyền tiếp từ đầu mảng (0) đến (write_pos - 1) (Mẫu mới nhất t_32767) */</span>
+uint32_t len2 = write_pos;
+send_in_512B_chunks(&amp;la_capture_buffer[0], len2);</pre>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- PHẦN 3: CẤU TRÚC KHUNG TRUYỀN GIAO THỨC (PROTOCOL PACKET STRUCTURES) -->
+  <div class="card">
+    <div class="card-title">
+      <span>3️⃣ Cấu Trúc Dữ Liệu Các Khung Truyền Giao Thức Giữa PC (GUI) ↔ STM32 (Firmware)</span>
+      <span class="badge badge-info">Chuẩn SSoT: spec/protocol.md</span>
+    </div>
+
+    <!-- 3.1. Khung lệnh 5 Bytes -->
+    <div style="font-weight:700; font-size:0.9rem; color:var(--text); margin-bottom:4px;">
+      A. Khung Lệnh Điều Khiển Từ PC Xuống STM32 (Cố định 5 Bytes — Lưu trong vòng đệm nhận <code>g_rx_ring[64]</code>):
+    </div>
+    <div class="packet-diagram">
+      <div class="byte-cell" style="border-color:#0284c7; background:#e0f2fe;">
+        <div class="b-idx">Byte 0</div>
+        <div class="b-hex" style="color:#0369a1;">0xA5</div>
+        <div class="b-name">Magic Header (Cố định)</div>
+      </div>
+      <div class="byte-cell">
+        <div class="b-idx">Byte 1</div>
+        <div class="b-hex" style="color:#15803d;">CMD_ID</div>
+        <div class="b-name">0x01: Start | 0x02: Abort | 0x03: Ping</div>
+      </div>
+      <div class="byte-cell">
+        <div class="b-idx">Byte 2</div>
+        <div class="b-hex" style="color:#6d28d9;">RATE_IDX</div>
+        <div class="b-name">0 (6MHz) → 8 (10kHz)</div>
+      </div>
+      <div class="byte-cell">
+        <div class="b-idx">Byte 3</div>
+        <div class="b-hex" style="color:#b45309;">TRIG_CFG</div>
+        <div class="b-name">Bit[7:4]=Kênh | Bit[3:0]=Mode</div>
+      </div>
+      <div class="byte-cell" style="border-color:#15803d; background:#dcfce7;">
+        <div class="b-idx">Byte 4</div>
+        <div class="b-hex" style="color:#15803d;">CHECKSUM</div>
+        <div class="b-name">Byte0 ^ Byte1 ^ Byte2 ^ Byte3</div>
+      </div>
+    </div>
+
+    <!-- 3.2. Khung dữ liệu 32.776 Bytes -->
+    <div style="font-weight:700; font-size:0.9rem; color:var(--text); margin-bottom:4px;">
+      B. Khung Phản Hồi Dữ Liệu Mẫu Từ STM32 Lên PC (Data Frame — Cố định 32.776 Bytes = 7B Header + 32.768B Payload + 1B Footer):
+    </div>
+    <div class="packet-diagram">
+      <div class="byte-cell" style="border-color:#0284c7; background:#e0f2fe;">
+        <div class="b-idx">Byte 0..1 (2B)</div>
+        <div class="b-hex" style="color:#0369a1;">0x5A, 0xA5</div>
+        <div class="b-name">Sync Magic Header</div>
+      </div>
+      <div class="byte-cell">
+        <div class="b-idx">Byte 2 (1B)</div>
+        <div class="b-hex" style="color:#15803d;">STATUS</div>
+        <div class="b-name">0x00: Trig OK | 0x01: FreeRun | 0x02: Timeout</div>
+      </div>
+      <div class="byte-cell">
+        <div class="b-idx">Byte 3..4 (2B LE)</div>
+        <div class="b-hex" style="color:#b91c1c;">0x9A, 0x19</div>
+        <div class="b-name">trig_offset = 6554</div>
+      </div>
+      <div class="byte-cell">
+        <div class="b-idx">Byte 5..6 (2B LE)</div>
+        <div class="b-hex" style="color:#6d28d9;">0x00, 0x80</div>
+        <div class="b-name">sample_count = 32768</div>
+      </div>
+      <div class="byte-cell" style="flex:2.2; border-color:#d97706; background:#fef3c7;">
+        <div class="b-idx">Byte 7 .. 32774 (32.768 Bytes — Chia thành 64 gói 512B)</div>
+        <div class="b-hex" style="color:#b45309;">Đoạn 1 [write_pos..32767] + Đoạn 2 [0..write_pos-1]</div>
+        <div class="b-name">Dữ liệu 8 kênh đã xoay vòng theo thứ tự thời gian t_0 → t_32767</div>
+      </div>
+      <div class="byte-cell" style="border-color:#15803d; background:#dcfce7;">
+        <div class="b-idx">Byte 32775 (1B)</div>
+        <div class="b-hex" style="color:#15803d;">XOR_SUM</div>
+        <div class="b-name">XOR toàn bộ 32.768B Payload</div>
+      </div>
+    </div>
+
+    <!-- 3.3. Bảng tra cứu 9 mức tần số TIM1 -->
+    <div style="font-weight:700; font-size:0.9rem; color:var(--text); margin:12px 0 6px 0;">
+      C. Bảng Cấu Hình Tần Số Lấy Mẫu <code>TIM1_ARR_TABLE[9]</code> &amp; Timeout Động Trong <code>la_core.c</code> (Clock TIM1 = 84 MHz, PSC = 0):
+    </div>
+    <div class="table-responsive">
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>Mã RATE_IDX</th>
+            <th>Tần số lấy mẫu (f_s)</th>
+            <th>Chu kỳ lấy mẫu (T_s)</th>
+            <th>Giá trị thanh ghi TIM1-&gt;ARR</th>
+            <th>Công thức kiểm chứng (84 MHz / (ARR + 1))</th>
+            <th>Thời gian thu đầy 32.768 mẫu</th>
+            <th>Ngưỡng Timeout động T = (16384/f_s) + 2000 ms</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td class="mono">0</td>
+            <td class="mono" style="color:var(--primary)">6 MHz</td>
+            <td class="mono">166.7 ns</td>
+            <td class="mono">13</td>
+            <td class="mono">84 MHz / (13 + 1) = 6.000 MHz</td>
+            <td class="mono">5.46 ms</td>
+            <td class="mono">2003 ms</td>
+          </tr>
+          <tr>
+            <td class="mono">1</td>
+            <td class="mono" style="color:var(--primary)">3 MHz</td>
+            <td class="mono">333.3 ns</td>
+            <td class="mono">27</td>
+            <td class="mono">84 MHz / (27 + 1) = 3.000 MHz</td>
+            <td class="mono">10.92 ms</td>
+            <td class="mono">2006 ms</td>
+          </tr>
+          <tr>
+            <td class="mono">2</td>
+            <td class="mono" style="color:var(--primary)">2 MHz</td>
+            <td class="mono">500.0 ns</td>
+            <td class="mono">41</td>
+            <td class="mono">84 MHz / (41 + 1) = 2.000 MHz</td>
+            <td class="mono">16.38 ms</td>
+            <td class="mono">2009 ms</td>
+          </tr>
+          <tr>
+            <td class="mono">3</td>
+            <td class="mono" style="color:var(--primary)">1 MHz</td>
+            <td class="mono">1.00 µs</td>
+            <td class="mono">83</td>
+            <td class="mono">84 MHz / (83 + 1) = 1.000 MHz</td>
+            <td class="mono">32.77 ms</td>
+            <td class="mono">2017 ms</td>
+          </tr>
+          <tr>
+            <td class="mono">4</td>
+            <td class="mono" style="color:var(--primary)">500 kHz</td>
+            <td class="mono">2.00 µs</td>
+            <td class="mono">167</td>
+            <td class="mono">84 MHz / (167 + 1) = 500.0 kHz</td>
+            <td class="mono">65.54 ms</td>
+            <td class="mono">2033 ms</td>
+          </tr>
+          <tr>
+            <td class="mono">5</td>
+            <td class="mono" style="color:var(--primary)">200 kHz</td>
+            <td class="mono">5.00 µs</td>
+            <td class="mono">419</td>
+            <td class="mono">84 MHz / (419 + 1) = 200.0 kHz</td>
+            <td class="mono">163.84 ms</td>
+            <td class="mono">2082 ms</td>
+          </tr>
+          <tr>
+            <td class="mono">6</td>
+            <td class="mono" style="color:var(--primary)">100 kHz</td>
+            <td class="mono">10.00 µs</td>
+            <td class="mono">839</td>
+            <td class="mono">84 MHz / (839 + 1) = 100.0 kHz</td>
+            <td class="mono">327.68 ms</td>
+            <td class="mono">2164 ms</td>
+          </tr>
+          <tr>
+            <td class="mono">7</td>
+            <td class="mono" style="color:var(--primary)">50 kHz</td>
+            <td class="mono">20.00 µs</td>
+            <td class="mono">1679</td>
+            <td class="mono">84 MHz / (1679 + 1) = 50.0 kHz</td>
+            <td class="mono">655.36 ms</td>
+            <td class="mono">2328 ms</td>
+          </tr>
+          <tr>
+            <td class="mono">8</td>
+            <td class="mono" style="color:var(--primary)">10 kHz</td>
+            <td class="mono">100.00 µs</td>
+            <td class="mono">8399</td>
+            <td class="mono">84 MHz / (8399 + 1) = 10.0 kHz</td>
+            <td class="mono">3276.80 ms (3.28 s)</td>
+            <td class="mono">3639 ms</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- PHẦN 4: BẢNG TỪ ĐIỂN GIẢI THÍCH TOÀN BỘ BIẾN, CẤU TRÚC DỮ LIỆU, HÀM & THANH GHI TRONG CODE -->
+  <div class="card">
+    <div class="card-title">
+      <span>4️⃣ Bảng Tra Cứu Chi Tiết Toàn Bộ Cấu Trúc Dữ Liệu, Biến, Hàm &amp; Thanh Ghi Trong Mã Nguồn Firmware</span>
+      <span class="badge badge-ok">Đối chiếu trực tiếp với la_core.c, la_protocol.c, la_testgen.c &amp; stm32f4xx_it.c</span>
+    </div>
+
+    <!-- 4.1. Bảng Cấu trúc dữ liệu, Hằng số & Biến toàn cục -->
+    <div style="font-weight:700; font-size:0.92rem; color:#0369a1; margin-bottom:6px;">
+      4.1. Bảng Cấu Trúc Dữ Liệu, Mảng Bộ Đệm &amp; Biến Trạng Thái (Data Structures &amp; Global Variables)
+    </div>
+    <div class="table-responsive" style="margin-bottom:16px;">
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>Tên Biến / Cấu Trúc / Hằng Số</th>
+            <th>Kiểu dữ liệu &amp; Kích thước</th>
+            <th>Nằm ở file nào?</th>
+            <th>Vai trò &amp; Giải thích dễ hiểu</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td class="mono">la_state_t</td>
+            <td class="mono">enum (6 trạng thái)</td>
+            <td class="mono">la_core.h</td>
+            <td>Kiểu liệt kê 6 bước của máy trạng thái: <code>IDLE (0)</code> → <code>ARMED (1)</code> → <code>PRE_SAMPLING (2)</code> → <code>WAIT_TRIGGER (3)</code> → <code>POST_SAMPLING (4)</code> → <code>TRANSFERRING (5)</code>.</td>
+          </tr>
+          <tr>
+            <td class="mono">la_capture_buffer[32768]</td>
+            <td class="mono">uint8_t[32768] (32 KB)</td>
+            <td class="mono">la_core.c</td>
+            <td><b>Bộ đệm vòng chính trong SRAM (chiếm 50% tổng RAM 64KB):</b> Nơi DMA2 tự động ghi trạng thái 8 kênh <code>PA0..PA7</code> vào ở mỗi nhịp TIM1.</td>
+          </tr>
+          <tr>
+            <td class="mono">TIM1_ARR_TABLE[9]</td>
+            <td class="mono">const uint16_t[9]</td>
+            <td class="mono">la_core.c</td>
+            <td>Bảng 9 con số <code>ARR</code> (<code>13, 27, 41, 83, 167, 419, 839, 1679, 8399</code>) để chia xung nhịp 84 MHz của TIM1 ra 9 tốc độ lấy mẫu từ 6 MHz xuống 10 kHz.</td>
+          </tr>
+          <tr>
+            <td class="mono">TIMEOUT_TABLE[9]</td>
+            <td class="mono">const uint32_t[9]</td>
+            <td class="mono">la_core.c</td>
+            <td>Bảng thời gian chờ Trigger tối đa (tính bằng ms): $T = (16384 / f_s) + 2000\text{ ms}$ (từ <code>2003 ms</code> ở 6 MHz đến <code>3639 ms</code> ở 10 kHz). Quá hạn này sẽ tự dừng để không treo phần mềm.</td>
+          </tr>
+          <tr>
+            <td class="mono">g_la_state</td>
+            <td class="mono">volatile la_state_t</td>
+            <td class="mono">la_core.c</td>
+            <td>Biến lưu trạng thái hiện tại của Firmware. Có từ khóa <code>volatile</code> vì được sửa đổi bên trong các hàm ngắt (ISR) và đọc ở vòng lặp <code>main</code>.</td>
+          </tr>
+          <tr>
+            <td class="mono">g_captured_write_pos</td>
+            <td class="mono">volatile uint16_t</td>
+            <td class="mono">la_core.c</td>
+            <td>Lưu vị trí ô nhớ nơi DMA dừng lại: <code>(32768 - NDTR) % 32768</code>. Đây chính là vị trí của <b>mẫu cũ nhất ($t_0$)</b> dùng làm mốc đầu tiên khi xoay vòng bộ đệm.</td>
+          </tr>
+          <tr>
+            <td class="mono">g_captured_status</td>
+            <td class="mono">volatile uint8_t</td>
+            <td class="mono">la_core.c</td>
+            <td>Lưu kết quả lượt đo để báo lên PC ở Byte 2 của Header: <code>0x00</code> (Bắt được Trigger), <code>0x01</code> (Free-run), hoặc <code>0x02</code> (Bị Timeout).</td>
+          </tr>
+          <tr>
+            <td class="mono">g_rx_ring[64], g_rx_head, g_rx_tail</td>
+            <td class="mono">volatile uint8_t[64]</td>
+            <td class="mono">la_protocol.c</td>
+            <td><b>Bộ đệm vòng nhận lệnh USB (64 Bytes):</b> Khi PC gửi lệnh xuống, ngắt USB bỏ từng byte vào <code>g_rx_head</code>; hàm ở <code>main</code> lấy ra từ <code>g_rx_tail</code> để tìm khung 5 Bytes bắt đầu bằng <code>0xA5</code>.</td>
+          </tr>
+          <tr>
+            <td class="mono">g_tx_header[7], g_tx_footer, g_tx_ctrl_buf[7]</td>
+            <td class="mono">uint8_t[] (Tĩnh)</td>
+            <td class="mono">la_protocol.c</td>
+            <td>Các mảng tĩnh chứa 7 byte đầu (Header), 1 byte cuối (Footer XOR) và khung phản hồi nhanh 7 byte (PONG/ABORT/NAK) khi truyền qua USB-CDC.</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <!-- 4.2. Bảng Giải thích toàn bộ các Hàm trong Firmware -->
+    <div style="font-weight:700; font-size:0.92rem; color:#15803d; margin-bottom:6px;">
+      4.2. Bảng Chức Năng Toàn Bộ Các Hàm (Functions &amp; Interrupt Callbacks)
+    </div>
+    <div class="table-responsive" style="margin-bottom:16px;">
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>Tên Hàm</th>
+            <th>File chứa hàm</th>
+            <th>Ai gọi hàm này? (Khi nào chạy?)</th>
+            <th>Nhiệm vụ chi tiết từng bước bên trong hàm</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td class="mono">la_core_init()</td>
+            <td class="mono">la_core.c</td>
+            <td>Hàm <code>main()</code> gọi 1 lần lúc mới bật điện</td>
+            <td>Đặt <code>TIM2-&gt;ARR = 26213</code>; bật điện trở kéo xuống (Pull-down) cho <code>PA0..PA7</code>; gắn <code>EXTI0..7</code> vào Port A và đặt mức ưu tiên ngắt cao nhất (Priority 0).</td>
+          </tr>
+          <tr>
+            <td class="mono">la_core_start_capture(rate_idx, trig_cfg)</td>
+            <td class="mono">la_core.c</td>
+            <td>Do <code>la_protocol_process()</code> gọi khi nhận lệnh <code>CMD_START (0x01)</code></td>
+            <td>1. Dừng TIM1/TIM2/DMA2 cũ.<br>2. Nạp <code>TIM1-&gt;ARR = TIM1_ARR_TABLE[rate_idx]</code>.<br>3. Khóa EXTI, xóa sạch cờ DMA2.<br>4. Bật DMA2 Circular đọc <code>GPIOA-&gt;IDR</code> vào <code>la_capture_buffer</code>.<br>5. Chuyển sang <code>PRE_SAMPLING</code> và bật <code>TIM1</code>.</td>
+          </tr>
+          <tr>
+            <td class="mono">la_core_on_dma_ht_isr()</td>
+            <td class="mono">la_core.c</td>
+            <td>Ngắt <code>DMA2_Stream5_IRQHandler</code> khi ghi đủ 50% mảng (16.384 mẫu)</td>
+            <td>Đảm bảo đã có $\ge 20\%$ dữ liệu trước Trigger. Nếu chế độ <b>Free-run</b>: bật luôn <code>TIM2</code>. Nếu <b>Edge Trigger</b>: mở khóa <code>EXTI-&gt;IMR</code> cho kênh cần đo và chuyển sang <code>WAIT_TRIGGER</code>.</td>
+          </tr>
+          <tr>
+            <td class="mono">la_core_on_exti_trigger_isr()</td>
+            <td class="mono">la_core.c</td>
+            <td>Ngắt <code>EXTI0..9_5_IRQHandler</code> ngay khi có cạnh xung trên chân đo</td>
+            <td>1. Khóa ngay <code>EXTI-&gt;IMR = 0</code> (tránh ngắt lặp lại).<br>2. Bật <code>TIM2-&gt;CR1 |= TIM_CR1_CEN</code> để bắt đầu đếm 26.214 mẫu sau Trigger.<br>3. Chuyển sang <code>POST_SAMPLING</code>.</td>
+          </tr>
+          <tr>
+            <td class="mono">la_core_on_tim2_period_elapsed_isr()</td>
+            <td class="mono">la_core.c</td>
+            <td>Ngắt <code>TIM2_IRQHandler</code> khi TIM2 đếm chạm mốc <code>ARR = 26213</code></td>
+            <td>1. Tắt ngay <code>TIM1</code> và <code>DMA2</code>.<br>2. Tính vị trí dừng: <code>g_captured_write_pos = (32768 - NDTR) % 32768</code>.<br>3. Chuyển sang <code>TRANSFERRING</code> để báo vòng lặp <code>main</code> gửi dữ liệu.</td>
+          </tr>
+          <tr>
+            <td class="mono">la_core_on_systick_tick()</td>
+            <td class="mono">la_core.c</td>
+            <td>Ngắt <code>SysTick_Handler</code> gọi đều đặn mỗi 1 mili-giây</td>
+            <td>Nếu đang ở <code>WAIT_TRIGGER</code> quá thời gian <code>g_timeout_limit_ms</code> mà không có xung: tự động dừng TIM1/DMA2, gán <code>status = 0x02 (TIMEOUT)</code> và chuyển sang <code>TRANSFERRING</code>.</td>
+          </tr>
+          <tr>
+            <td class="mono">la_core_process()</td>
+            <td class="mono">la_core.c</td>
+            <td>Vòng lặp <code>while(1)</code> trong <code>main.c</code></td>
+            <td>Kiểm tra nếu <code>g_la_state == LA_STATE_TRANSFERRING</code> thì gọi <code>la_protocol_send_data_frame()</code> đẩy 32.776 Bytes lên PC, tắt LED và đưa FSM về <code>IDLE</code>.</td>
+          </tr>
+          <tr>
+            <td class="mono">la_protocol_process_rx_bytes()</td>
+            <td class="mono">la_protocol.c</td>
+            <td>Ngắt USB <code>CDC_Receive_FS()</code> khi có byte từ PC gửi xuống</td>
+            <td>Nếu đang truyền 32KB (<code>TRANSFERRING</code>) thì bỏ qua; ngược lại chép các byte nhận được vào bộ đệm vòng <code>g_rx_ring[64]</code>.</td>
+          </tr>
+          <tr>
+            <td class="mono">la_protocol_process()</td>
+            <td class="mono">la_protocol.c</td>
+            <td>Vòng lặp <code>while(1)</code> trong <code>main.c</code></td>
+            <td>Quét trượt trên <code>g_rx_ring[64]</code> tìm byte <code>0xA5</code>, kiểm tra XOR Checksum của 5 bytes và thực thi lệnh <code>PING (0x03)</code>, <code>ABORT (0x02)</code> hoặc <code>START (0x01)</code>.</td>
+          </tr>
+          <tr>
+            <td class="mono">la_protocol_send_data_frame()</td>
+            <td class="mono">la_protocol.c</td>
+            <td>Do <code>la_core_process()</code> gọi ở bước <code>TRANSFERRING</code></td>
+            <td>Tính XOR toàn bộ 32KB; gửi Header (7B) → Gửi Đoạn 1 (<code>write_pos..32767</code>) → Gửi Đoạn 2 (<code>0..write_pos-1</code>) theo từng khối 512B (có Watchdog 100ms) → Gửi Footer (1B).</td>
+          </tr>
+          <tr>
+            <td class="mono">la_testgen_process()</td>
+            <td class="mono">la_testgen.c</td>
+            <td>Vòng lặp <code>while(1)</code> trong <code>main.c</code></td>
+            <td>Định kỳ mỗi 20 ms phát chuỗi ASCII <code>"TEST_LA_2026\r\n"</code> (115200 bps) ra chân <code>PA9 (USART1_TX)</code> để người dùng cắm dây sang <code>PA0</code> tự test thiết bị.</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <!-- 4.3. Bảng Các Thanh Ghi Phần Cứng STM32F401 Được Can Thiệp Trực Tiếp -->
+    <div style="font-weight:700; font-size:0.92rem; color:#b45309; margin-bottom:6px;">
+      4.3. Bảng Giải Nghĩa Các Thanh Ghi Phần Cứng STM32F401 Xuất Hiện Trong Code
+    </div>
+    <div class="table-responsive">
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>Thanh ghi trong Code</th>
+            <th>Tên đầy đủ (RM0368)</th>
+            <th>Ý nghĩa vật lý dễ hiểu</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td class="mono">GPIOA-&gt;IDR</td>
+            <td>Input Data Register (Port A)</td>
+            <td>Thanh ghi chứa mức điện áp hiện tại (0 hoặc 1) của các chân Port A. 8 bit thấp của nó chính là trạng thái tức thời của 8 kênh đo <code>PA0..PA7</code>.</td>
+          </tr>
+          <tr>
+            <td class="mono">GPIOA-&gt;PUPDR</td>
+            <td>Pull-up / Pull-down Register</td>
+            <td>Thanh ghi bật điện trở kéo lên/kéo xuống bên trong chip. Firmware gán <code>0x0000AAAA</code> để bật <b>Pull-down (kéo xuống 0V)</b> cho <code>PA0..PA7</code> khi rút dây đo.</td>
+          </tr>
+          <tr>
+            <td class="mono">TIM1-&gt;ARR &amp; TIM2-&gt;ARR</td>
+            <td>Auto-Reload Register</td>
+            <td><b>Mốc đếm trần của Timer:</b> Trên <code>TIM1</code> nó quyết định tốc độ lấy mẫu ($84\text{ MHz}/(\text{ARR}+1)$); trên <code>TIM2</code> nó quyết định đếm đúng <code>26213</code> (26.214 mẫu sau Trigger) thì dừng.</td>
+          </tr>
+          <tr>
+            <td class="mono">TIM1-&gt;CR1 &amp; TIM2-&gt;CR1</td>
+            <td>Control Register 1 (Bit CEN)</td>
+            <td>Thanh ghi công tắc bật/tắt Timer. Ghi <code>CR1 |= TIM_CR1_CEN</code> là bật bộ đếm; ghi <code>CR1 &amp;= ~TIM_CR1_CEN</code> là dừng bộ đếm ngay lập tức.</td>
+          </tr>
+          <tr>
+            <td class="mono">DMA2_Stream5-&gt;NDTR</td>
+            <td>Number of Data Register</td>
+            <td>Thanh ghi đếm lùi của DMA: Bắt đầu từ <code>32768</code>, mỗi khi chép được 1 mẫu vào RAM nó giảm đi 1. Nhìn vào <code>NDTR</code> lúc dừng, ta biết chính xác DMA vừa ghi tới ô số mấy: <code>write_pos = 32768 - NDTR</code>.</td>
+          </tr>
+          <tr>
+            <td class="mono">DMA2-&gt;HISR &amp; DMA2-&gt;HIFCR</td>
+            <td>High Interrupt Status / Clear Register</td>
+            <td><code>HISR</code> dùng để đọc cờ báo đầy nửa bộ đệm (<code>HTIF5</code> - Half Transfer); <code>HIFCR</code> dùng để xóa sạch các cờ đó trước khi bắt đầu lượt đo mới.</td>
+          </tr>
+          <tr>
+            <td class="mono">EXTI-&gt;RTSR, FTSR, IMR, PR</td>
+            <td>External Interrupt Registers</td>
+            <td>Bộ 4 thanh ghi bắt cạnh xung Trigger: <code>RTSR</code> (chọn cạnh lên), <code>FTSR</code> (chọn cạnh xuống), <code>IMR</code> (công tắc cho phép/khóa ngắt), <code>PR</code> (cờ báo đã có cạnh xung).</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <script>
+    let currentStep = 0;
+    let autoPlayTimer = null;
+
+    const FSM_DATA = [
+      {
+        name: 'LA_STATE_IDLE',
+        title: 'Bước 1: LA_STATE_IDLE — Trạng thái nghỉ, chờ lệnh 5 Bytes từ máy tính PC',
+        desc: `
+          <ul style="padding-left:18px;">
+            <li>Khi mới bật nguồn, hàm <code>la_core_init()</code> đặt <code>g_la_state = LA_STATE_IDLE</code>, tắt LED PC13, cấu hình điện trở kéo xuống (Pull-down) cho <code>PA0..PA7</code> để chống nhiễu khi chưa cắm dây đo.</li>
+            <li>Mỗi khi PC gửi byte qua cổng USB-CDC, ngắt <code>CDC_Receive_FS()</code> đẩy byte vào bộ đệm vòng <code>g_rx_ring[64]</code>.</li>
+            <li>Trong vòng lặp <code>while(1)</code> ở <code>main.c</code>, hàm <code>la_protocol_process()</code> dùng <b>cửa sổ trượt (Sliding Window)</b> quét tìm byte đầu <code>0xA5</code>, kiểm tra XOR Checksum của 5 bytes và gọi <code>la_core_start_capture(rate_idx, trig_cfg)</code>.</li>
+          </ul>`,
+        code: `<span class="cmt">/* Vòng lặp chính trong main.c */</span>
+<span class="kw">while</span> (1) {
+    <span class="fn">la_protocol_process</span>(); <span class="cmt">// Quét g_rx_ring[64] tìm khung lệnh [0xA5, CMD, RATE, TRIG, XOR]</span>
+    <span class="fn">la_core_process</span>();     <span class="cmt">// Kiểm tra nếu đang ở TRANSFERRING thì gửi gói 32.776B lên PC</span>
+}`,
+        regs: [
+          ['Biến g_la_state', 'LA_STATE_IDLE (0)', 'Máy trạng thái đang rảnh, sẵn sàng nhận lệnh CMD_START'],
+          ['TIM1 (Sampling Timer)', 'CEN = 0 (Đang tắt)', 'Chưa phát xung kích DMA'],
+          ['DMA2_Stream5', 'EN = 0, NDTR = 32768', 'Chưa hoạt động'],
+          ['EXTI->IMR (Mặt nạ ngắt)', '0x0000 (Khóa kín)', 'Khóa toàn bộ ngắt cạnh PA0..PA7'],
+          ['TIM2 (Post-trigger Timer)', 'CEN = 0, ARR = 26213', 'Đang tắt, chờ lệnh kích hoạt'],
+          ['USB-CDC (g_rx_ring[64])', 'Đang lắng nghe', 'Sẵn sàng nhận lệnh Start (0x01), Abort (0x02), Ping (0x03)']
+        ]
+      },
+      {
+        name: 'LA_STATE_ARMED',
+        title: 'Bước 2: LA_STATE_ARMED — Thiết lập phần cứng Timer, xóa cờ DMA2 và khóa ngắt EXTI',
+        desc: `
+          <ul style="padding-left:18px;">
+            <li>Ngay khi nhận lệnh <code>CMD_START (0x01)</code> hợp lệ, hàm <code>la_core_start_capture()</code> chuyển trạng thái sang <code>LA_STATE_ARMED</code>.</li>
+            <li><b>Tại sao phải khóa EXTI và xóa cờ DMA lúc này?</b> Để đảm bảo không có cờ ngắt rác từ lần đo trước làm kích hoạt Trigger giả khi bộ đệm chưa kịp nạp đủ 20% dữ liệu lịch sử (Pre-trigger)!</li>
+            <li>Nạp giá trị chia tần số <code>TIM1-&gt;ARR = TIM1_ARR_TABLE[rate_idx]</code> (ví dụ <code>ARR = 83</code> cho 1 MHz) và cấu hình <code>DMA2_Stream5</code> trỏ nguồn vào địa chỉ thanh ghi <code>&amp;(GPIOA-&gt;IDR)</code>, đích vào mảng <code>la_capture_buffer[32768]</code>.</li>
+          </ul>`,
+        code: `<span class="cmt">/* Trích đoạn trong la_core_start_capture() - la_core.c */</span>
+<span class="reg">TIM1->ARR</span> = TIM1_ARR_TABLE[rate_idx]; <span class="cmt">// Nạp tần số lấy mẫu (VD: 13 -> 6MHz, 83 -> 1MHz)</span>
+<span class="reg">TIM2->ARR</span> = 26213;                    <span class="cmt">// Chuẩn bị đếm đúng 26.214 mẫu Post-trigger (80%)</span>
+<span class="reg">EXTI->IMR</span> &amp;= ~0x00FFU;                <span class="cmt">// Khóa chặt EXTI trong lúc nạp Pre-trigger</span>
+<span class="reg">DMA2->HIFCR</span> = CHTIF5 | CTCIF5 | ...; <span class="cmt">// Xóa sạch mọi cờ DMA tồn dư</span>
+<span class="fn">HAL_DMA_Start_IT</span>(&amp;hdma_tim1_up, (uint32_t)&amp;(<span class="reg">GPIOA->IDR</span>), (uint32_t)la_capture_buffer, <span class="reg">32768</span>);`,
+        regs: [
+          ['Biến g_la_state', 'LA_STATE_ARMED (1)', 'Đang chuẩn bị thanh ghi trước khi mở van xung nhịp'],
+          ['TIM1->ARR', 'TIM1_ARR_TABLE[rate]', 'Đã nạp chu kỳ lấy mẫu (VD: ARR = 13 cho 6 MHz)'],
+          ['DMA2_Stream5->M0AR', '&la_capture_buffer[0]', 'Trỏ vào đầu mảng 32KB trong SRAM'],
+          ['DMA2_Stream5->PAR', '&(GPIOA->IDR)', 'Trỏ vào thanh ghi đọc trạng thái 8 chân PA0..PA7'],
+          ['EXTI->IMR', '0x0000 (Đang khóa)', 'Cấm ngắt cạnh cho đến khi nạp đủ dữ liệu Pre-trigger'],
+          ['LED PC13', 'ON (Active Low = 0)', 'Bật sáng báo hiệu bắt đầu chu trình thu thập']
+        ]
+      },
+      {
+        name: 'LA_STATE_PRE_SAMPLING',
+        title: 'Bước 3: LA_STATE_PRE_SAMPLING — TIM1 + DMA2 tự động hút mẫu vào RAM, đợi cờ Half-Transfer (50% ≥ 20%)',
+        desc: `
+          <ul style="padding-left:18px;">
+            <li>TIM1 bắt đầu chạy! Mỗi khi TIM1 đếm tràn, nó phát tín hiệu phần cứng <code>TIM1_UP</code> gọi <code>DMA2_Stream5</code> copy 1 byte từ <code>GPIOA-&gt;IDR</code> vào <code>la_capture_buffer</code>. Quá trình này diễn ra <b>hoàn toàn bằng phần cứng, CPU rảnh 100%</b>.</li>
+            <li><b>Bí quyết kỹ thuật:</b> Chúng ta cần giữ lại <b>20% lịch sử trước Trigger (6.554 mẫu)</b>. Thay vì dùng CPU đọc thanh ghi <code>NDTR</code> liên tục, Firmware tận dụng luôn <b>Ngắt Nửa Bộ Đệm (DMA Half-Transfer Interrupt - HTIF5)</b> khi DMA ghi được 50% mảng (16.384 mẫu &ge; 6.554 mẫu yêu cầu)!</li>
+          </ul>`,
+        code: `<span class="cmt">/* Khi DMA2 ghi được 16.384 mẫu (50% buffer), phần cứng tự gọi ISR Half-Transfer: */</span>
+<span class="kw">void</span> <span class="fn">la_core_on_dma_ht_isr</span>(<span class="kw">void</span>) {
+    <span class="kw">if</span> (g_la_state == LA_STATE_PRE_SAMPLING) {
+        <span class="cmt">// Đã có ít nhất 16.384 mẫu lịch sử (>= 6.554 mẫu Pre-trigger yêu cầu)!</span>
+        <span class="cmt">// Nếu Free-run -> Bật luôn TIM2; Nếu Edge Trigger -> Mở khóa EXTI và sang WAIT_TRIGGER</span>
+    }
+}`,
+        regs: [
+          ['Biến g_la_state', 'LA_STATE_PRE_SAMPLING (2)', 'Đang tích lũy dữ liệu lịch sử đầu kỳ'],
+          ['TIM1 (Master Timer)', 'CEN = 1, UDE = 1 (Đang chạy)', 'Phát xung nhịp đều đặn kích hoạt DMA2'],
+          ['DMA2_Stream5->NDTR', 'Đếm lùi 32768 → 16384', 'Khi NDTR giảm xuống 16384 thì cờ HTIF5 bật lên'],
+          ['EXTI->IMR', '0x0000 (Vẫn khóa)', 'Chưa cho phép bắt Trigger vì chưa đủ Pre-trigger'],
+          ['TIM2 (Slave Timer)', 'CEN = 0 (Vẫn đứng yên)', 'Chưa đếm Post-trigger'],
+          ['CPU Cortex-M4', '0% tải bắt mẫu', 'Toàn bộ việc đọc GPIOA->IDR do DMA2 tự làm trên bus AHB1']
+        ]
+      },
+      {
+        name: 'LA_STATE_WAIT_TRIGGER',
+        title: 'Bước 4: LA_STATE_WAIT_TRIGGER — Mở khóa EXTI rình cạnh xung Trigger + Bộ đếm SysTick Timeout',
+        desc: `
+          <ul style="padding-left:18px;">
+            <li>Sau khi cờ <code>HTIF5</code> bật (đã nạp đủ lịch sử Pre-trigger), hàm <code>la_core_on_dma_ht_isr()</code> cấu hình thanh ghi chọn cạnh lên (<code>EXTI-&gt;RTSR</code>) hoặc cạnh xuống (<code>EXTI-&gt;FTSR</code>) và <b>mở mặt nạ ngắt <code>EXTI-&gt;IMR |= (1 &lt;&lt; ch)</code></b> trên kênh cần đo.</li>
+            <li>Trong lúc chờ đợi cạnh xung xuất hiện, <b>TIM1 và DMA2 vẫn tiếp tục ghi vòng tròn (Circular)</b> đè lên dữ liệu cũ để luôn giữ lại những mẫu mới nhất ngay trước thời điểm Trigger.</li>
+            <li>Đồng thời, ngắt <code>SysTick</code> (mỗi 1 ms) tăng biến <code>g_timeout_counter_ms</code>. Nếu chờ quá <code>TIMEOUT_TABLE[rate_idx]</code> (~2 giây) mà dây đo không có xung, Firmware tự động dừng và trả về mã <code>LA_STATUS_TIMEOUT (0x02)</code> để GUI không bị treo!</li>
+          </ul>`,
+        code: `<span class="cmt">/* Mở ngắt EXTI trên kênh chỉ định sau khi đã đủ Pre-trigger */</span>
+<span class="reg">EXTI->PR</span>  = (1U &lt;&lt; ch);   <span class="cmt">// Xóa cờ ngắt báo giả cũ trước khi mở</span>
+<span class="reg">EXTI->IMR</span> |= (1U &lt;&lt; ch);  <span class="cmt">// Unmask EXTI (Ưu tiên NVIC = 0 cao nhất toàn hệ thống!)</span>
+g_timeout_counter_ms = 0;
+g_la_state = <span class="reg">LA_STATE_WAIT_TRIGGER</span>;`,
+        regs: [
+          ['Biến g_la_state', 'LA_STATE_WAIT_TRIGGER (3)', 'Đang rình sự kiện cạnh lên/xuống trên chân PA[ch]'],
+          ['TIM1 + DMA2_Stream5', 'Đang chạy Circular', 'Liên tục cập nhật vòng tròn 32KB RAM với mẫu mới nhất'],
+          ['EXTI->IMR', '(1 << trig_ch) (ĐÃ MỞ!)', 'Sẵn sàng nhảy vào ngắt với độ ưu tiên NVIC = 0 (Cao nhất)'],
+          ['g_timeout_counter_ms', 'Đếm tăng 0 → ~2017 ms', 'Bảo vệ chống treo nếu người dùng quên cắm dây tín hiệu'],
+          ['TIM2 (Slave Timer)', 'CEN = 0, CNT = 0', 'Đứng chờ lệnh xuất phát từ ngắt EXTI'],
+          ['Phản ứng với lệnh PC', 'Trả NAK 0xE3 nếu gửi Start', 'Chấp nhận lệnh PING (0x04) hoặc ABORT (0x05)']
+        ]
+      },
+      {
+        name: 'LA_STATE_POST_SAMPLING',
+        title: 'Bước 5: LA_STATE_POST_SAMPLING — Ngắt EXTI kích hoạt TIM2 đếm chính xác 26.214 mẫu sau Trigger (80%)',
+        desc: `
+          <ul style="padding-left:18px;">
+            <li><b>Khoảnh khắc cạnh Trigger xuất hiện trên chân PA[ch]:</b> Phần cứng nhảy tức thì vào ngắt <code>la_core_on_exti_trigger_isr()</code> (Priority 0).</li>
+            <li>Trong ngắt này chỉ làm 2 việc cực nhanh (&lt; 15 chu kỳ lệnh):
+              <br>1) <b>Khóa ngay <code>EXTI-&gt;IMR = 0</code></b> để các cạnh xung tiếp theo không kích hoạt lại.
+              <br>2) <b>Bật <code>TIM2-&gt;CR1 |= TIM_CR1_CEN</code></b>! Vì TIM2 được nối dây nội bộ <code>ITR0</code> nhận xung nhịp từ TIM1, cứ mỗi mẫu TIM1 lấy thêm, <code>TIM2-&gt;CNT</code> tăng lên 1.</li>
+            <li>TIM2 sẽ tự động đếm từ <code>0</code> đến <code>ARR = 26213</code> (tức là thu thập thêm đúng <b>26.214 mẫu = 80% bộ đệm</b> sau sự kiện Trigger).</li>
+          </ul>`,
+        code: `<span class="kw">void</span> <span class="fn">la_core_on_exti_trigger_isr</span>(<span class="kw">void</span>) {
+    <span class="kw">if</span> (g_la_state == LA_STATE_WAIT_TRIGGER) {
+        <span class="reg">EXTI->IMR</span> &amp;= ~0x00FFU;      <span class="cmt">// 1. Khóa ngay EXTI (chỉ bắt 1 lần duy nhất)</span>
+        <span class="reg">TIM2->CNT</span> = 0;
+        <span class="reg">TIM2->CR1</span> |= TIM_CR1_CEN;   <span class="cmt">// 2. Bật TIM2 đếm đúng 26.214 xung từ TIM1 (qua ITR0)</span>
+        g_la_state = <span class="reg">LA_STATE_POST_SAMPLING</span>;
+    }
+}`,
+        regs: [
+          ['Biến g_la_state', 'LA_STATE_POST_SAMPLING (4)', 'Đang thu thập 80% dữ liệu sau điểm Trigger'],
+          ['EXTI->IMR', '0x0000 (Đã khóa lại)', 'Tránh bị ngắt lặp lại bởi các xung phía sau'],
+          ['Liên kết TIM1 → TIM2', 'TRGO → ITR0 (Hardware)', 'Mỗi mẫu DMA2 đọc = 1 xung tăng bộ đếm TIM2'],
+          ['TIM2->CNT', 'Đếm 0 → 26213 (26.214 mẫu)', 'Đếm chính xác bằng phần cứng, sai số 0 mẫu!'],
+          ['DMA2_Stream5', 'Ghi thêm 26.214 byte', 'Giữ nguyên 6.554 mẫu cũ trước Trigger, ghi mới 26.214 mẫu sau Trigger'],
+          ['g_captured_status', '0x00 (TRIGGER_OK)', 'Ghi nhận đã bắt được cạnh Trigger thành công']
+        ]
+      },
+      {
+        name: 'LA_STATE_TRANSFERRING',
+        title: 'Bước 6: LA_STATE_TRANSFERRING — TIM2 dừng TIM1, đóng gói xoay vòng 32.776 Bytes gửi qua USB-CDC',
+        desc: `
+          <ul style="padding-left:18px;">
+            <li>Khi <code>TIM2</code> đếm đủ 26.214 mẫu, ngắt tràn <code>la_core_on_tim2_period_elapsed_isr()</code> (Priority 1) lập tức <b>tắt TIM1 (<code>TIM1-&gt;CR1 &amp;= ~TIM_CR1_CEN</code>)</b> và dừng DMA2.</li>
+            <li>Đọc thanh ghi <code>NDTR</code> của DMA2 để tính vị trí con trỏ dừng: <code>g_captured_write_pos = (32768 - DMA2_Stream5-&gt;NDTR) % 32768</code>.</li>
+            <li>Chuyển sang <code>LA_STATE_TRANSFERRING</code>: Hàm <code>la_core_process()</code> ở vòng lặp chính gọi <code>la_protocol_send_data_frame()</code> gửi <b>Header (7B) + Payload xoay vòng (32.768B chia thành các gói 512B kèm Watchdog 100ms) + Footer Checksum XOR (1B)</b> lên PC, rồi quay về <code>LA_STATE_IDLE</code>!</li>
+          </ul>`,
+        code: `<span class="kw">void</span> <span class="fn">la_core_on_tim2_period_elapsed_isr</span>(<span class="kw">void</span>) {
+    <span class="reg">TIM1->CR1</span> &amp;= ~TIM_CR1_CEN;           <span class="cmt">// 1. Dừng tức thì xung lấy mẫu TIM1!</span>
+    <span class="reg">DMA2_Stream5->CR</span> &amp;= ~DMA_SxCR_EN;    <span class="cmt">// 2. Dừng kênh DMA2</span>
+    uint16_t ndtr = <span class="reg">DMA2_Stream5->NDTR</span>;
+    g_captured_write_pos = (<span class="reg">32768</span> - ndtr) % <span class="reg">32768</span>; <span class="cmt">// Vị trí mẫu cũ nhất t_0</span>
+    g_la_state = <span class="reg">LA_STATE_TRANSFERRING</span>;
+}`,
+        regs: [
+          ['Biến g_la_state', 'LA_STATE_TRANSFERRING (5)', 'Đang truyền gói 32.776B lên PC (Khóa tạm thời đường nhận USB)'],
+          ['TIM1 & TIM2 & DMA2', 'CEN = 0, EN = 0 (Đã dừng)', 'Mảng la_capture_buffer[32768] được đóng băng an toàn'],
+          ['g_captured_write_pos', '(32768 - NDTR) % 32768', 'Đánh dấu vị trí mẫu đầu tiên t_0 để xoay vòng mảng'],
+          ['Điểm Trigger chuẩn hóa', 'trig_offset = 6554 (0x199A)', 'Cố định tại mẫu thứ 6554 sau khi xoay vòng'],
+          ['USB-CDC Chunking', '64 gói × 512 Bytes', 'Kiểm tra hcdc->TxState == 0 kèm Watchdog 100ms mỗi gói'],
+          ['Sau khi gửi xong Footer', 'Quay về LA_STATE_IDLE', 'Tắt LED PC13, hoàn tất 1 chu trình đo trọn vẹn']
+        ]
+      }
+    ];
+
+    function selectFsmStep(idx) {
+      currentStep = idx;
+      for (let i = 0; i < 6; i++) {
+        document.getElementById('fsmStep' + i).classList.toggle('active', i === idx);
+      }
+
+      const st = FSM_DATA[idx];
+      document.getElementById('fsmCodePanel').innerHTML = `
+        <h4>${st.title}</h4>
+        ${st.desc}
+        <pre class="c-code">${st.code}</pre>
+      `;
+
+      const tbody = document.getElementById('tbodyFsmRegisters');
+      tbody.innerHTML = st.regs.map(r => `
+        <tr>
+          <td><b>${r[0]}</b></td>
+          <td class="mono" style="color:var(--primary)">${r[1]}</td>
+          <td>${r[2]}</td>
+        </tr>
+      `).join('');
+
+      renderHardwareArchSVG(idx);
+    }
+
+    function prevFsmStep() {
+      selectFsmStep((currentStep + 5) % 6);
+    }
+    function nextFsmStep() {
+      selectFsmStep((currentStep + 1) % 6);
+    }
+    function toggleAutoPlay() {
+      const btn = document.getElementById('btnAutoPlay');
+      if (autoPlayTimer) {
+        clearInterval(autoPlayTimer);
+        autoPlayTimer = null;
+        btn.textContent = '▶ Tự động chạy qua 6 bước';
+      } else {
+        btn.textContent = '⏸ Dừng chạy tự động';
+        autoPlayTimer = setInterval(() => {
+          nextFsmStep();
+        }, 2800);
+      }
+    }
+
+    function renderHardwareArchSVG(stepIdx) {
+      const svg = document.getElementById('svgHwArch');
+
+      const tim1Active = (stepIdx >= 2 && stepIdx <= 4);
+      const dmaActive = (stepIdx >= 2 && stepIdx <= 4);
+      const extiActive = (stepIdx === 3 || stepIdx === 4);
+      const tim2Active = (stepIdx === 4 || stepIdx === 5);
+      const usbRxActive = (stepIdx === 0 || stepIdx === 1);
+      const usbTxActive = (stepIdx === 5);
+
+      const boxStyle = (active, colorHex, bgHex) =>
+        `fill="${active ? bgHex : '#f8fafc'}" stroke="${active ? colorHex : '#cbd5e1'}" stroke-width="${active ? 2.5 : 1.5}"`;
+
+      svg.innerHTML = `
+        <!-- Khung nền kiến trúc STM32F401 -->
+        <rect x="8" y="8" width="804" height="374" rx="10" fill="#ffffff" stroke="#e2e8f0" stroke-width="1.5" />
+        <text x="22" y="28" fill="#0f172a" font-size="12.5" font-weight="bold">
+          SƠ ĐỒ KHỐI KIẾN TRÚC PHẦN CỨNG &amp; LUỒNG DỮ LIỆU BÊN TRONG CHIP STM32F401CCU6
+        </text>
+
+        <!-- 1. Cổng GPIOA (PA0..PA7) ở góc trái trên -->
+        <rect x="24" y="55" width="165" height="90" rx="8" ${boxStyle(dmaActive || extiActive, '#15803d', '#dcfce7')} />
+        <text x="106" y="78" fill="#15803d" font-size="12" font-weight="bold" text-anchor="middle">PORT A (PA0..PA7)</text>
+        <text x="106" y="96" fill="#334155" font-size="10.5" font-family="Consolas,monospace" text-anchor="middle">Thanh ghi: GPIOA-&gt;IDR</text>
+        <text x="106" y="114" fill="#475569" font-size="10" text-anchor="middle">8 bit = Trạng thái 8 kênh</text>
+        <text x="106" y="131" fill="#15803d" font-size="10" font-weight="bold" text-anchor="middle">(Pull-down chống nhiễu)</text>
+
+        <!-- 2. Bộ định thời Master TIM1 (84 MHz) ở giữa trên -->
+        <rect x="265" y="55" width="210" height="90" rx="8" ${boxStyle(tim1Active, '#0284c7', '#e0f2fe')} />
+        <text x="370" y="77" fill="#0369a1" font-size="12" font-weight="bold" text-anchor="middle">TIM1 (Master Sampling Timer)</text>
+        <text x="370" y="95" fill="#334155" font-size="10.5" font-family="Consolas,monospace" text-anchor="middle">Clock = 84 MHz | PSC = 0</text>
+        <text x="370" y="112" fill="#0284c7" font-size="10.5" font-weight="bold" text-anchor="middle">ARR = 13 (6MHz) .. 8399 (10kHz)</text>
+        <text x="370" y="130" fill="${tim1Active ? '#15803d' : '#64748b'}" font-size="10.5" font-weight="bold" text-anchor="middle">
+          ${tim1Active ? '⚡ ĐANG PHÁT XUNG LẤY MẪU' : '⏸ Đang dừng (CEN = 0)'}
+        </text>
+
+        <!-- 3. Bộ đếm Post-Trigger TIM2 (Slave One-Pulse) ở góc phải trên -->
+        <rect x="565" y="55" width="225" height="90" rx="8" ${boxStyle(tim2Active, '#6d28d9', '#ede9fe')} />
+        <text x="677" y="77" fill="#6d28d9" font-size="12" font-weight="bold" text-anchor="middle">TIM2 (Slave Post-Trigger)</text>
+        <text x="677" y="95" fill="#334155" font-size="10.5" font-family="Consolas,monospace" text-anchor="middle">One-Pulse Mode | ARR = 26213</text>
+        <text x="677" y="112" fill="#475569" font-size="10" text-anchor="middle">Đếm đúng 26.214 mẫu (80% Buffer)</text>
+        <text x="677" y="130" fill="${tim2Active ? '#dc2626' : '#64748b'}" font-size="10.5" font-weight="bold" text-anchor="middle">
+          ${stepIdx === 4 ? '⏳ ĐANG ĐẾM 0 → 26213...' : (stepIdx === 5 ? '🛑 ĐÃ TRÀN → TẮT TIM1!' : '⏸ Chờ EXTI kích hoạt')}
+        </text>
+
+        <!-- Đường nối ITR0 từ TIM1 sang TIM2 -->
+        <line x1="475" y1="100" x2="565" y2="100" stroke="${tim2Active ? '#6d28d9' : '#94a3b8'}" stroke-width="2.5" class="${stepIdx === 4 ? 'flow-anim' : ''}" />
+        <rect x="490" y="76" width="60" height="18" rx="4" fill="#f5f3ff" stroke="#c4b5fd" />
+        <text x="520" y="88" fill="#6d28d9" font-size="9.5" font-weight="bold" text-anchor="middle">ITR0</text>
+
+        <!-- 4. Khối ngắt ngoài EXTI0..EXTI7 (Priority 0) ở bên trái giữa -->
+        <rect x="24" y="195" width="185" height="82" rx="8" ${boxStyle(extiActive, '#dc2626', '#fee2e2')} />
+        <text x="116" y="216" fill="#b91c1c" font-size="11.5" font-weight="bold" text-anchor="middle">EXTI0..7 (Edge Trigger)</text>
+        <text x="116" y="233" fill="#334155" font-size="10" font-weight="bold" text-anchor="middle">Ưu tiên NVIC = 0 (Cao nhất)</text>
+        <text x="116" y="250" fill="#475569" font-size="10" text-anchor="middle">Bắt cạnh lên / cạnh xuống</text>
+        <text x="116" y="266" fill="${stepIdx === 3 ? '#dc2626' : '#64748b'}" font-size="10" font-weight="bold" text-anchor="middle">
+          ${stepIdx === 3 ? '👀 ĐANG RÌNH CẠNH XUNG!' : (stepIdx === 4 ? '⚡ ĐÃ BẮT ĐƯỢC → KÍCH TIM2!' : '🔒 Đang khóa (IMR = 0)')}
+        </text>
+
+        <!-- Dây từ GPIOA xuống EXTI -->
+        <line x1="106" y1="145" x2="106" y2="195" stroke="${extiActive ? '#dc2626' : '#94a3b8'}" stroke-width="2" />
+
+        <!-- 5. Bộ vận chuyển DMA2_Stream5 (Channel 6) ở chính giữa -->
+        <rect x="265" y="195" width="210" height="82" rx="8" ${boxStyle(dmaActive, '#0284c7', '#e0f2fe')} />
+        <text x="370" y="216" fill="#0369a1" font-size="11.5" font-weight="bold" text-anchor="middle">DMA2_Stream5 (Channel 6)</text>
+        <text x="370" y="233" fill="#334155" font-size="10" font-family="Consolas,monospace" text-anchor="middle">Chế độ: Circular (Quay vòng)</text>
+        <text x="370" y="250" fill="#475569" font-size="10" text-anchor="middle">Ưu tiên DMA: Very High</text>
+        <text x="370" y="266" fill="${dmaActive ? '#0369a1' : '#64748b'}" font-size="10" font-weight="bold" text-anchor="middle">
+          ${stepIdx === 2 ? '⏳ Đợi cờ HTIF5 (16.384 mẫu)' : (dmaActive ? '🚀 Đang bốc GPIOA->IDR vào RAM' : '⏸ Đang nghỉ')}
+        </text>
+
+        <!-- Mũi tên TIM1 kích DMA2 -->
+        <line x1="370" y1="145" x2="370" y2="195" stroke="${tim1Active ? '#0284c7' : '#94a3b8'}" stroke-width="2.5" class="${tim1Active ? 'flow-anim' : ''}" />
+        <rect x="315" y="160" width="110" height="18" rx="4" fill="#e0f2fe" stroke="#7dd3fc" />
+        <text x="370" y="172" fill="#0369a1" font-size="9.5" font-weight="bold" text-anchor="middle">TIM1_UP (UDE=1)</text>
+
+        <!-- Đường bốc dữ liệu từ GPIOA->IDR qua DMA2 -->
+        <path d="M 189 100 L 230 100 L 230 235 L 265 235" fill="none" stroke="${dmaActive ? '#15803d' : '#cbd5e1'}" stroke-width="3" class="${dmaActive ? 'flow-anim' : ''}" />
+
+        <!-- 6. Bộ đệm vòng SRAM la_capture_buffer[32768] ở bên phải giữa -->
+        <rect x="550" y="190" width="240" height="92" rx="8" ${boxStyle(dmaActive || usbTxActive, '#b45309', '#fef3c7')} />
+        <text x="670" y="212" fill="#b45309" font-size="11.5" font-weight="bold" text-anchor="middle">SRAM: la_capture_buffer[32768]</text>
+        <text x="670" y="229" fill="#334155" font-size="10" font-family="Consolas,monospace" text-anchor="middle">Dung lượng: 32 KB (50% tổng RAM)</text>
+        <text x="670" y="246" fill="#475569" font-size="10" text-anchor="middle">20% Pre (6554B) + 80% Post (26214B)</text>
+        <text x="670" y="265" fill="#b45309" font-size="10" font-weight="bold" text-anchor="middle">
+          write_pos = 32768 - DMA2-&gt;NDTR
+        </text>
+
+        <!-- Đường ghi từ DMA2 sang SRAM -->
+        <line x1="475" y1="235" x2="550" y2="235" stroke="${dmaActive ? '#0284c7' : '#cbd5e1'}" stroke-width="3" class="${dmaActive ? 'flow-anim' : ''}" />
+
+        <!-- 7. Giao tiếp USB OTG FS (CDC Virtual COM Port) ở dưới cùng -->
+        <rect x="265" y="308" width="525" height="58" rx="8" ${boxStyle(usbRxActive || usbTxActive, '#0284c7', '#f0f9ff')} />
+        <text x="527" y="329" fill="#0369a1" font-size="11.5" font-weight="bold" text-anchor="middle">
+          USB OTG_FS (USB-CDC 12 Mbps) ↔ Máy Tính PC (Python GUI của TV3)
+        </text>
+        <text x="527" y="348" fill="#334155" font-size="10.5" text-anchor="middle">
+          ${usbTxActive
+            ? '📤 ĐANG TRUYỀN GÓI 32.776 BYTES (Xoay vòng từ write_pos, chia 64 gói 512B kèm Watchdog 100ms)'
+            : '📥 Nhận khung lệnh 5B vào g_rx_ring[64] | Trả khung phản hồi Control/NAK 7B'}
+        </text>
+
+        <!-- Đường truyền từ SRAM xuống USB khi ở Bước 6 -->
+        <line x1="670" y1="282" x2="670" y2="308" stroke="${usbTxActive ? '#d97706' : '#cbd5e1'}" stroke-width="3" class="${usbTxActive ? 'flow-anim' : ''}" />
+      `;
+    }
+
+    function updateUnrollSimulation() {
+      const BUF_SIZE = 32768;
+      const PRE_SAMPLES = 6554;
+      const POST_SAMPLES = 26214;
+
+      const trigIdx = parseInt(document.getElementById('ctrlTrigIdx').value, 10);
+      // Khi Trigger xảy ra tại trigIdx, DMA ghi tiếp POST_SAMPLES (26.214 mẫu) từ trigIdx .. (trigIdx + 26213) % 32768
+      // Con trỏ write_pos dừng lại ở ngay ô tiếp theo:
+      const writePos = (trigIdx + POST_SAMPLES) % BUF_SIZE;
+      const ndtrVal = BUF_SIZE - writePos;
+      const newestIdx = (writePos + BUF_SIZE - 1) % BUF_SIZE;
+      const len1 = BUF_SIZE - writePos;
+      const len2 = writePos;
+      // Vị trí của trigIdx sau khi xoay vòng (Unroll):
+      const unrolledTrigOffset = (trigIdx - writePos + BUF_SIZE) % BUF_SIZE;
+
+      document.getElementById('lblTrigIndex').textContent =
+        `Trigger tại index = ${trigIdx}  ➔  DMA dừng tại write_pos = ${writePos}  ➔  Sau Unroll: trig_offset = ${unrolledTrigOffset}`;
+
+      document.getElementById('tbodyUnrollMath').innerHTML = `
+        <tr>
+          <td><b>1. Vị trí ô nhớ khi có cạnh Trigger</b></td>
+          <td class="mono">trig_idx (Ngẫu nhiên trong RAM)</td>
+          <td class="mono" style="color:var(--red)">Ô nhớ [${trigIdx}]</td>
+        </tr>
+        <tr>
+          <td><b>2. Số mẫu TIM2 đếm thêm sau Trigger (80%)</b></td>
+          <td class="mono">LA_POST_TRIGGER_SAMPLES</td>
+          <td class="mono">+26.214 mẫu</td>
+        </tr>
+        <tr>
+          <td><b>3. Thanh ghi DMA2_Stream5-&gt;NDTR lúc dừng</b></td>
+          <td class="mono">Số ô còn lại tới cuối mảng</td>
+          <td class="mono">${ndtrVal}</td>
+        </tr>
+        <tr>
+          <td><b>4. Vị trí con trỏ dừng (Mẫu cũ nhất t_0)</b></td>
+          <td class="mono">write_pos = (32768 - NDTR) % 32768</td>
+          <td class="mono" style="color:var(--primary)">Ô nhớ [${writePos}] (= t_0)</td>
+        </tr>
+        <tr>
+          <td><b>5. Kích thước Đoạn 1 &amp; Đoạn 2 gửi USB</b></td>
+          <td class="mono">len1 = 32768 - write_pos | len2 = write_pos</td>
+          <td class="mono">Đoạn 1: ${len1} B | Đoạn 2: ${len2} B</td>
+        </tr>
+        <tr>
+          <td><b>6. Vị trí Trigger trên mảng gửi lên PC</b></td>
+          <td class="mono">(trig_idx - write_pos + 32768) % 32768</td>
+          <td class="mono" style="color:var(--green)">Luôn bằng ${unrolledTrigOffset} (Cố định!)</td>
+        </tr>
+      `;
+
+      // Vẽ SVG trực quan hóa mảng vật lý vs mảng sau khi Unroll
+      const svg = document.getElementById('svgUnroll');
+      const barX = 50, barW = 700;
+      const pxOf = (idx) => barX + (idx / BUF_SIZE) * barW;
+
+      const pxWrite = pxOf(writePos);
+      const pxTrig = pxOf(trigIdx);
+
+      svg.innerHTML = `
+        <!-- TIÊU ĐỀ THANH 1: MẢNG VẬT LÝ TRONG SRAM -->
+        <text x="50" y="26" fill="#0f172a" font-size="12.5" font-weight="bold">
+          A. Mảng vật lý trong SRAM: la_capture_buffer[0 .. 32767] (DMA ghi quay vòng từ trái sang phải, chạm 32767 vòng về 0)
+        </text>
+
+        <!-- Khung nền mảng vật lý -->
+        <rect x="${barX}" y="42" width="${barW}" height="46" rx="5" fill="#f1f5f9" stroke="#94a3b8" stroke-width="1.5" />
+
+        <!-- Tô màu Đoạn 2 (0 .. write_pos-1) và Đoạn 1 (write_pos .. 32767) -->
+        <rect x="${barX}" y="42" width="${pxWrite - barX}" height="46" fill="#fde68a" stroke="#d97706" stroke-width="1" />
+        <rect x="${pxWrite}" y="42" width="${barX + barW - pxWrite}" height="46" fill="#bae6fd" stroke="#0284c7" stroke-width="1" />
+
+        <text x="${barX + 6}" y="104" fill="#475569" font-size="10.5" font-family="Consolas,monospace">Index 0</text>
+        <text x="${barX + barW - 75}" y="104" fill="#475569" font-size="10.5" font-family="Consolas,monospace">Index 32767</text>
+
+        <!-- Vạch đánh dấu write_pos (Mẫu cũ nhất t_0) -->
+        <line x1="${pxWrite}" y1="34" x2="${pxWrite}" y2="96" stroke="#0284c7" stroke-width="3" />
+        <rect x="${Math.min(barX + barW - 140, Math.max(barX, pxWrite - 70))}" y="108" width="145" height="22" rx="4" fill="#e0f2fe" stroke="#0284c7" />
+        <text x="${Math.min(barX + barW - 68, Math.max(barX + 72, pxWrite))}" y="123" fill="#0369a1" font-size="10.5" font-weight="bold" text-anchor="middle">
+          write_pos = ${writePos} (t_0)
+        </text>
+
+        <!-- Vạch đánh dấu trig_idx -->
+        <line x1="${pxTrig}" y1="34" x2="${pxTrig}" y2="96" stroke="#dc2626" stroke-width="3" />
+        <rect x="${Math.min(barX + barW - 135, Math.max(barX, pxTrig - 65))}" y="134" width="135" height="22" rx="4" fill="#fee2e2" stroke="#dc2626" />
+        <text x="${Math.min(barX + barW - 67, Math.max(barX + 67, pxTrig))}" y="149" fill="#b91c1c" font-size="10.5" font-weight="bold" text-anchor="middle">
+          Trigger [${trigIdx}]
+        </text>
+
+        <!-- Mũi tên xoay vòng (Buffer Unrolling) -->
+        <text x="400" y="182" fill="#6d28d9" font-size="12" font-weight="bold" text-anchor="middle">
+          ⬇ BƯỚC XOAY VÒNG (BUFFER UNROLLING): Bốc Đoạn 1 [write_pos..32767] đặt lên đầu + Nối Đoạn 2 [0..write_pos-1] vào đuôi ⬇
+        </text>
+
+        <!-- TIÊU ĐỀ THANH 2: MẢNG TUYẾN TÍNH GỬI LÊN PC -->
+        <text x="50" y="208" fill="#0f172a" font-size="12.5" font-weight="bold">
+          B. Khung Payload 32.768 Bytes gửi lên PC (Đã sắp xếp chuẩn theo thời gian từ t_0 → t_32767):
+        </text>
+
+        <!-- Đoạn 1 (Màu xanh) + Đoạn 2 (Màu vàng) sau khi nối -->
+        <rect x="${barX}" y="220" width="${(len1 / BUF_SIZE) * barW}" height="46" fill="#bae6fd" stroke="#0284c7" stroke-width="1.5" />
+        <rect x="${barX + (len1 / BUF_SIZE) * barW}" y="220" width="${(len2 / BUF_SIZE) * barW}" height="46" fill="#fde68a" stroke="#d97706" stroke-width="1.5" />
+
+        <text x="${barX + 10}" y="247" fill="#0369a1" font-size="11" font-weight="bold">
+          Đoạn 1 (${len1} B)
+        </text>
+        ${len2 > 2500 ? `<text x="${barX + (len1 / BUF_SIZE) * barW + 10}" y="247" fill="#b45309" font-size="11" font-weight="bold">Đoạn 2 (${len2} B)</text>` : ''}
+
+        <!-- Vạch cố định 20% Pre-trigger (6554) và 80% Post-trigger (26214) -->
+        <line x1="${barX + (PRE_SAMPLES / BUF_SIZE) * barW}" y1="212" x2="${barX + (PRE_SAMPLES / BUF_SIZE) * barW}" y2="278" stroke="#dc2626" stroke-width="3.5" />
+        <rect x="${barX + (PRE_SAMPLES / BUF_SIZE) * barW - 85}" y="280" width="185" height="26" rx="5" fill="#dcfce7" stroke="#15803d" stroke-width="1.5" />
+        <text x="${barX + (PRE_SAMPLES / BUF_SIZE) * barW + 7}" y="297" fill="#15803d" font-size="11" font-weight="bold" text-anchor="middle">
+          🎯 Trigger cố định tại t_6554 (20%)
+        </text>
+
+        <text x="${barX}" y="284" fill="#0369a1" font-size="10.5" font-weight="bold">t_0 (Mẫu cũ nhất)</text>
+        <text x="${barX + barW}" y="284" fill="#b45309" font-size="10.5" font-weight="bold" text-anchor="end">t_32767 (Mẫu mới nhất - Đủ 80% Post-trigger)</text>
+      `;
+    }
+
+    window.addEventListener('DOMContentLoaded', () => {
+      selectFsmStep(0);
+      updateUnrollSimulation();
+    });
+  </script>
+</body>
+</html>

@@ -69,3 +69,6 @@ Thumbs.db
 desktop.ini
 *.swp
 *~
+~$*
+*.tmp
+
