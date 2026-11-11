@@ -24,20 +24,12 @@ Firmware phát đồng thời 4 loại tín hiệu trên 8 kênh chân GPIO đ�
 
 ---
 
-## 2. Hướng Dẫn Nạp Firmware Cho ESP32
+## 2. Hướng Dẫn Nạp Bằng Arduino IDE
 
-### Cách 1: Nạp Bằng PlatformIO (Khuyên dùng)
-Nếu máy tính đã cài `platformio`:
-```bash
-cd testgen_esp32
-pio run -t upload
-```
-
-### Cách 2: Nạp Bằng Arduino IDE
-1. Cài đặt board **ESP32** trong *Boards Manager* (`esp32 by Espressif Systems`).
-2. Mở file `testgen_esp32/src/main.cpp` (hoặc đổi tên thành `testgen_esp32.ino`).
-3. Chọn Board: **ESP32 Dev Module**.
-4. Chọn đúng cổng COM của ESP32 và nhấn **Upload**.
+1. Mở file **`testgen_esp32/testgen_esp32.ino`** trực tiếp trong Arduino IDE.
+2. Chọn Board: **Tools** $\rightarrow$ **Board** $\rightarrow$ **ESP32 Arduino** $\rightarrow$ **ESP32 Dev Module**.
+3. Chọn đúng cổng COM của ESP32 (ví dụ `/dev/ttyUSB0` hoặc `COMx`).
+4. Nhấn nút **Upload** (mũi tên sang phải) để nạp.
 
 ---
 
