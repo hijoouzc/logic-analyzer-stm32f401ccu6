@@ -94,10 +94,13 @@ class TestActiveChannelSynchronization(unittest.TestCase):
         # Khung nhãn 0 được highlight nền #262628
         frame_0_style = self.win.waveform.channel_frames[0].styleSheet()
         self.assertIn(T.BG_CARD, frame_0_style)
+        self.assertIn(f"4px solid {T.CHANNEL_COLORS[0]}", frame_0_style)
 
-        # Khung nhãn 1 giữ nền #1b1b1c
+        # Khung nhãn 1 giữ nền #1b1b1c và giữ nguyên 100% vạch màu gốc
         frame_1_style = self.win.waveform.channel_frames[1].styleSheet()
         self.assertIn(T.BG_MAIN, frame_1_style)
+        self.assertIn(f"4px solid {T.CHANNEL_COLORS[1]}", frame_1_style)
+        self.assertNotIn("99;", frame_1_style)
 
     def test_02_click_channel_label_frame_sync(self):
         """Mô phỏng nhấp chuột trái vào khung nhãn Kênh 2 -> Toàn bộ phân hệ đồng bộ về CH2."""

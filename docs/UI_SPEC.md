@@ -283,8 +283,9 @@ Hệ thống đồng bộ kênh tác vụ (`Active Channel`) tạo ra mối liê
 
 ### 9.2. Cơ Chế Phản Hồi Trực Quan (Visual Channel Feedback)
 * Khi `active_channel = N`:
-  * Khung nhãn `channel_frames[N]` đổi màu nền sang `#262628`, viền trái sáng rực màu đặc trưng của kênh (`T.CHANNEL_COLORS[N]`), tên kênh `Channel N` chuyển sang màu trắng sáng `#ffffff`.
-  * Các khung nhãn khác giữ màu nền tối `#1b1b1c` và tên kênh màu xám `#9d9da4`.
+  * Khung nhãn `channel_frames[N]` được làm nổi bật với màu nền `#262628`, tên kênh `Channel N` chuyển sang màu trắng sáng `#ffffff` (font-weight 700).
+  * Toàn bộ 8 kênh (kể cả khi không được chọn) **luôn giữ nguyên 100% vạch màu sắc nhận diện đặc trưng gốc** (`border-left: 4px solid T.CHANNEL_COLORS[i]`) và chữ số `D0..D7` mang màu kênh gốc tương ứng; tuyệt đối không làm mờ, không thêm alpha/độ trong suốt để kỹ sư luôn nhận diện kênh tức thì tại mọi thời điểm.
+  * Các khung nhãn không chọn giữ màu nền tối mặc định `#1b1b1c` và tên kênh màu xám sáng tiêu chuẩn `T.TEXT` (`#e0e0e0`, font-weight 500).
   * Thuật toán Magnetic Snap tự động gán `self.active_inspect_channel = N`, ưu tiên hút nam châm vào các sườn xung của kênh `N`.
 
 ### 9.3. Đồng Bộ Phân Hệ Device Settings & Measurements

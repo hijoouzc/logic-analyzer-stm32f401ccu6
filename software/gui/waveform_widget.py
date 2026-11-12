@@ -1052,8 +1052,8 @@ class WaveformWidget(QtWidgets.QWidget):
     def set_active_channel(self, ch: int):
         """
         Thiết lập kênh tác vụ (Active Channel: 0..7).
-        Cập nhật trực quan cột nhãn: highlight kênh được chọn (nền #262628, viền rực rỡ, chữ trắng),
-        làm mờ các kênh còn lại (nền #1b1b1c, chữ xám).
+        Highlight nền khung nhãn của kênh được chọn (nền #262628, chữ trắng sáng),
+        giữ nguyên 100% vạch màu sắc gốc (T.CHANNEL_COLORS) và chữ số D0..D7 cho tất cả các kênh.
         Ưu tiên kênh này trong thuật toán Magnetic Snap.
         """
         if not (0 <= ch < 8):
@@ -1087,7 +1087,7 @@ class WaveformWidget(QtWidgets.QWidget):
                 f.setStyleSheet(f"""
                     QFrame {{
                         background-color: {T.BG_MAIN};
-                        border-left: 3px solid {col}99;
+                        border-left: 4px solid {col};
                         border-bottom: 1px solid {T.BORDER_MUTED};
                     }}
                     QFrame:hover {{
@@ -1097,7 +1097,7 @@ class WaveformWidget(QtWidgets.QWidget):
                 """)
                 top_lbl.setText(
                     f"<span style=\"color:{col};font-family:'Roboto Condensed','Roboto',sans-serif;font-weight:700;font-size:11px;letter-spacing:0.165px;\">D{i}</span>"
-                    f"&nbsp;&nbsp;&nbsp;<span style=\"font-family:'Roboto',sans-serif;font-size:13px;font-weight:400;letter-spacing:0.065px;color:{T.TEXT_MUTED};\">{ch_name}</span>"
+                    f"&nbsp;&nbsp;&nbsp;<span style=\"font-family:'Roboto',sans-serif;font-size:13px;font-weight:500;letter-spacing:0.065px;color:{T.TEXT};\">{ch_name}</span>"
                 )
 
     def _on_channel_frame_clicked(self, ch: int, ev):
