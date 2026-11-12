@@ -477,12 +477,15 @@ class WaveformWidget(QtWidgets.QWidget):
     sigBubbleCtrlClicked = QtCore.pyqtSignal(int, dict)        # (frame_idx, frame_dict)
     sigQuickMeasureState = QtCore.pyqtSignal(bool, str)        # (active, prompt_message)
     sigHoverTimestamp = QtCore.pyqtSignal(float, int, int)     # (t_sec, sample_idx, raw_byte_val)
+    sigChannelSelected = QtCore.pyqtSignal(int)                # channel_idx (0..7)
 
     def __init__(self, parent=None):
         super().__init__(parent)
 
         self.channel_names = list(DEFAULT_CHANNEL_NAMES)
         self.channel_visible = [True] * 8
+        self.active_channel: int = 0
+        self.active_analyzer_channels: set = {0}
         self.current_data: Optional[Dict[str, Any]] = None
         self.row_h = T.CHANNEL_ROW_HEIGHT
         self.dec_scale = T.DECODER_ROW_SCALE
@@ -547,6 +550,8 @@ class WaveformWidget(QtWidgets.QWidget):
 
         for i in range(8):
             f = QtWidgets.QFrame()
+            f.setCursor(QtCore.Qt.PointingHandCursor)
+            f.mousePressEvent = lambda ev, ch=i: self._on_channel_frame_clicked(ch, ev)
             col = T.CHANNEL_COLORS[i]
             f.setStyleSheet(f"""
                 QFrame {{
@@ -571,6 +576,7 @@ class WaveformWidget(QtWidgets.QWidget):
                 f"<span style=\"color:{col};font-family:'Roboto Condensed','Roboto',sans-serif;font-weight:700;font-size:11px;letter-spacing:0.165px;\">D{i}</span>"
                 f"&nbsp;&nbsp;&nbsp;<span style=\"font-family:'Roboto',sans-serif;font-size:13px;font-weight:500;letter-spacing:0.065px;color:{T.TEXT};\">Channel {i}</span>"
             )
+            top_lbl.setAttribute(QtCore.Qt.WA_TransparentForMouseEvents, True)
             h_ch.addWidget(top_lbl, 1)
 
             # Nút Menu kênh [...] tùy chọn cho từng kênh số
@@ -604,6 +610,7 @@ class WaveformWidget(QtWidgets.QWidget):
             chip = QtWidgets.QLabel(f"<span style='color:{T.DECODE_UART_BG};font-size:9px;'>■</span> &nbsp;Async Serial" if i == 0 else "")
             chip.setStyleSheet(f"color: {T.TEXT_DIM}; font-family: 'Roboto', sans-serif; font-size: 11px;")
             chip.setVisible(i == 0)
+            chip.setAttribute(QtCore.Qt.WA_TransparentForMouseEvents, True)
             f_lay.addWidget(chip)
             f_lay.addStretch(1)
             self.channel_chips.append(chip)
@@ -831,6 +838,7 @@ class WaveformWidget(QtWidgets.QWidget):
         self._recompute_row_heights()
         # Đặt phạm vi X ban đầu cố định (0 đến 32.768 ms ứng với 32.768 mẫu 1MHz)
         self.plot_widget.setXRange(0.0, 0.032768, padding=0)
+        self.set_active_channel(0)
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
@@ -1039,11 +1047,137 @@ class WaveformWidget(QtWidgets.QWidget):
         """Đổi tên hiển thị của kênh số."""
         if 0 <= ch < 8:
             self.channel_names[ch] = name
-            col = T.CHANNEL_COLORS[ch]
-            self.channel_labels_top[ch].setText(
-                f"<span style=\"color:{col};font-family:'Roboto Condensed','Roboto',sans-serif;font-weight:700;font-size:11px;letter-spacing:0.165px;\">D{ch}</span>"
-                f"&nbsp;&nbsp;&nbsp;<span style=\"font-family:'Roboto',sans-serif;font-size:13px;font-weight:500;letter-spacing:0.065px;color:{T.TEXT};\">{name}</span>"
-            )
+            self.set_active_channel(self.active_channel)
+
+    def set_active_channel(self, ch: int):
+        """
+        Thiết lập kênh tác vụ (Active Channel: 0..7).
+        Cập nhật trực quan cột nhãn: highlight kênh được chọn (nền #262628, viền rực rỡ, chữ trắng),
+        làm mờ các kênh còn lại (nền #1b1b1c, chữ xám).
+        Ưu tiên kênh này trong thuật toán Magnetic Snap.
+        """
+        if not (0 <= ch < 8):
+            return
+        self.active_channel = ch
+        self.active_inspect_channel = ch
+
+        for i in range(min(8, len(self.channel_frames))):
+            f = self.channel_frames[i]
+            top_lbl = self.channel_labels_top[i]
+            col = T.CHANNEL_COLORS[i]
+            ch_name = self.channel_names[i] if i < len(self.channel_names) else f"Channel {i}"
+
+            if i == ch:
+                f.setStyleSheet(f"""
+                    QFrame {{
+                        background-color: {T.BG_CARD};
+                        border-left: 4px solid {col};
+                        border-bottom: 1px solid {T.BORDER_MUTED};
+                    }}
+                    QFrame:hover {{
+                        background-color: {T.BG_SELECT};
+                    }}
+                    QLabel {{ border: none; background: transparent; }}
+                """)
+                top_lbl.setText(
+                    f"<span style=\"color:{col};font-family:'Roboto Condensed','Roboto',sans-serif;font-weight:700;font-size:11px;letter-spacing:0.165px;\">D{i}</span>"
+                    f"&nbsp;&nbsp;&nbsp;<span style=\"font-family:'Roboto',sans-serif;font-size:13px;font-weight:700;letter-spacing:0.065px;color:#ffffff;\">{ch_name}</span>"
+                )
+            else:
+                f.setStyleSheet(f"""
+                    QFrame {{
+                        background-color: {T.BG_MAIN};
+                        border-left: 3px solid {col}99;
+                        border-bottom: 1px solid {T.BORDER_MUTED};
+                    }}
+                    QFrame:hover {{
+                        background-color: {T.BG_SELECT};
+                    }}
+                    QLabel {{ border: none; background: transparent; }}
+                """)
+                top_lbl.setText(
+                    f"<span style=\"color:{col};font-family:'Roboto Condensed','Roboto',sans-serif;font-weight:700;font-size:11px;letter-spacing:0.165px;\">D{i}</span>"
+                    f"&nbsp;&nbsp;&nbsp;<span style=\"font-family:'Roboto',sans-serif;font-size:13px;font-weight:400;letter-spacing:0.065px;color:{T.TEXT_MUTED};\">{ch_name}</span>"
+                )
+
+    def _on_channel_frame_clicked(self, ch: int, ev):
+        """Xử lý sự kiện click chuột vào khung nhãn kênh ở cột bên trái."""
+        if ev.button() == QtCore.Qt.LeftButton:
+            self.set_active_channel(ch)
+            self.sigChannelSelected.emit(ch)
+
+    def get_channel_transitions(self, ch: int, max_count: int = 512) -> List[Dict[str, Any]]:
+        """
+        Trích xuất danh sách sườn xung (Transition Edge Timing List) của kênh chỉ định.
+        Mỗi phần tử gồm:
+          - index: Thứ tự 1..N
+          - edge: "RISING" | "FALLING"
+          - edge_str: "↑ RISING" | "↓ FALLING"
+          - edge_color: màu xanh (#3ddbd9) cho Rising, cam (#f18d4b) cho Falling
+          - time_s: Mốc thời gian (float, giây)
+          - delta_t: Độ rộng xung từ sườn trước tới sườn này (float, giây hoặc None)
+          - freq: Tần số chu kỳ tương ứng 1 / (2 * delta_t) (float, Hz hoặc None)
+          - sample_idx: Chỉ số mẫu trong mảng capture (int)
+        """
+        if not self.current_data or "channels" not in self.current_data:
+            return []
+        channels = self.current_data["channels"]
+        if ch < 0 or ch >= len(channels):
+            return []
+
+        ch_data = np.asarray(channels[ch], dtype=np.uint8)
+        diff_indices = np.where(np.diff(ch_data) != 0)[0] + 1
+        if len(diff_indices) == 0:
+            return []
+
+        if self.current_time_axis is None or len(self.current_time_axis) < len(ch_data):
+            sample_rate = float(self.current_data.get("sample_rate", 1_000_000.0))
+            trig_offset = int(self.current_data.get("trig_offset", 6554))
+            status = self.current_data.get("status", 0)
+            if status == 0:
+                time_axis = (np.arange(len(ch_data), dtype=np.float64) - trig_offset) / sample_rate
+            else:
+                time_axis = np.arange(len(ch_data), dtype=np.float64) / sample_rate
+        else:
+            time_axis = self.current_time_axis
+
+        # Giới hạn tối đa max_count phần tử để đảm bảo render GUI mượt mà < 1ms
+        indices = diff_indices[:max_count]
+        res = []
+        prev_t = None
+        for i, idx in enumerate(indices):
+            val_curr = int(ch_data[idx])
+            val_prev = int(ch_data[idx - 1])
+            is_rising = val_curr > val_prev
+            t_curr = float(time_axis[idx])
+
+            delta_t = (t_curr - prev_t) if prev_t is not None else None
+            freq = (1.0 / (2.0 * delta_t)) if (delta_t is not None and delta_t > 1e-12) else None
+            prev_t = t_curr
+
+            res.append({
+                "index": i + 1,
+                "edge": "RISING" if is_rising else "FALLING",
+                "edge_str": "↑ RISING" if is_rising else "↓ FALLING",
+                "edge_color": "#3ddbd9" if is_rising else "#f18d4b",
+                "time_s": t_curr,
+                "delta_t": delta_t,
+                "freq": freq,
+                "sample_idx": int(idx),
+            })
+        return res
+
+    def pan_to_time(self, t_target: float):
+        """Căn giữa mốc thời gian t_target trên màn hình mà không làm thay đổi tỷ lệ phóng to."""
+        x_min, x_max = self.vb.viewRange()[0]
+        span = x_max - x_min
+        if span <= 0 or not np.isfinite(span):
+            span = 0.0005
+        half = span / 2.0
+        self.plot_widget.setXRange(t_target - half, t_target + half, padding=0)
+        self.cursor_a.setValue(t_target)
+        self.cursor_a.show()
+        self._update_hud()
 
     def _show_channel_menu(self, ch: int, button: QtWidgets.QToolButton):
         """Mở menu ngữ cảnh tùy chọn cho kênh số."""
@@ -1373,8 +1507,18 @@ class WaveformWidget(QtWidgets.QWidget):
                 self.preview_measure_text.show()
 
     def _on_scene_mouse_clicked(self, ev):
-        """Xử lý sự kiện click chuột trong PlotWidget cho Quick Measure Tool."""
+        """Xử lý sự kiện click chuột trong PlotWidget cho Quick Measure Tool và Chọn Kênh Tác Vụ."""
         if not self.quick_measure_active:
+            if ev.button() == QtCore.Qt.LeftButton:
+                if getattr(ev, "currentItem", None) in (self.cursor_a, self.cursor_b):
+                    return
+                pos = ev.scenePos()
+                if self.vb.sceneBoundingRect().contains(pos):
+                    view_pt = self.vb.mapSceneToView(pos)
+                    target_ch = self.get_channel_at_y(float(view_pt.y()))
+                    if 0 <= target_ch < 8:
+                        self.set_active_channel(target_ch)
+                        self.sigChannelSelected.emit(target_ch)
             return
 
         # Bấm chuột phải để hủy chế độ Quick Measure

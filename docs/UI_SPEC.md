@@ -239,3 +239,97 @@ Mọi thay đổi mã nguồn liên quan đến thước đo bắt buộc phải
 6. **Kiểm thử Point Inspector:** Rê chuột trên sóng phát tín hiệu thời gian thực và số thứ tự mẫu.
 7. **Kiểm thử Analyzer-Aware Snapping trên chuỗi phẳng `1111`:** Khi có UART Decoder, kéo cursor trên chuỗi `1111` phẳng lì (không có sườn xung vật lý) $\rightarrow$ Vị trí cursor phải tự động hút dính chính xác vào ranh giới bit thứ 1 ($t_{\text{start}} + 1 \times T_{\text{bit}}$), đo đúng $\Delta t = T_{\text{bit}}$.
 8. **Kiểm thử hồi quy:** 100% PASS trên `test_auto_repeat.py`, `test_gui_integration.py`, `test_phase2_commercial.py` và `test_corner_cases_comprehensive.py`.
+
+---
+
+## 9. Đặc Tả Kỹ Thuật: Hệ Thống Đồng Bộ Kênh Tác Vụ Toàn Diện (Unified Active Channel Synchronization)
+
+Hệ thống đồng bộ kênh tác vụ (`Active Channel`) tạo ra mối liên kết động, nhất quán và tức thì giữa toàn bộ các phân hệ trên giao diện: Cột nhãn sóng (Labels), Khung sóng (Viewport), Thiết lập Trigger (Device Settings), Đo đạc tự động (Measurements), và Bảng dữ liệu (Data Table).
+
+```text
+                                [Người dùng nhấp chọn Kênh N]
+                    (Click vào Nhãn D0..D7 hoặc Track sóng Kênh N)
+                                          │
+        ┌─────────────────────────────────┼─────────────────────────────────┐
+        ▼                                 ▼                                 ▼
+[Cột Nhãn Sóng]                 [Device Settings]                  [Measurements]
+• Highlight khung nhãn N        • Đồng bộ combo Trigger:           • Đồng bộ combo Đo:
+  (Nền sáng #262628)              combo_ch = CHN (DN)                combo_meas_ch = CHN
+• Vạch màu kênh rực rỡ          • Sẵn sàng bắt cạnh xung          • Tự động tính toán f, T,
+• Các kênh khác về chìm                                              Duty, t_high, t_low...
+        │                                                                   │
+        └─────────────────────────────────┬─────────────────────────────────┘
+                                          ▼
+                                    [Data Table]
+                   (Bảng Dữ Liệu Tự Thích Ứng Thông Minh - Dual Mode)
+                                          │
+                 ┌────────────────────────┴────────────────────────┐
+                 ▼                                                 ▼
+      [Kênh N có Protocol Analyzer]                     [Kênh N là Sóng Số Thô]
+      (Ví dụ: CH0 UART, CH2 I2C, CH4 SPI)              (Ví dụ: CH1 PWM, CH3 Clock, GPIO)
+      • Bảng hiện Packets giải mã                       • Bảng hiện Danh Sách Sườn Xung
+      • Cột: Type, Start, Duration, Data                  (Transition Edge Timing List)
+      • Click dòng -> Zoom tới byte                     • Cột: #, Edge (↑/↓), Time, Δt, f
+                                                        • Click dòng -> Cuộn tới sườn xung
+```
+
+### 9.1. Quy Trình Kích Hoạt Kênh Tác Vụ (Active Channel Activation)
+* Trạng thái `active_channel` ($0 \dots 7$) được quản lý tập trung ở `MainWindow` và đồng bộ với `WaveformWidget`.
+* Mặc định khi khởi động: `active_channel = 0` (CH0).
+* **3 Cách chuyển đổi kênh tác vụ:**
+  1. Nhấp chuột trái vào Khung nhãn `D0..D7 Channel X` ở Cột nhãn bên trái.
+  2. Hoặc nhấp chuột trái vào Track sóng của kênh đó trên khung vẽ (Plot Viewport).
+  3. Hoặc chọn kênh từ Combobox trong thẻ Device Settings (`combo_ch`) hay thẻ Measurements (`combo_meas_ch`).
+
+### 9.2. Cơ Chế Phản Hồi Trực Quan (Visual Channel Feedback)
+* Khi `active_channel = N`:
+  * Khung nhãn `channel_frames[N]` đổi màu nền sang `#262628`, viền trái sáng rực màu đặc trưng của kênh (`T.CHANNEL_COLORS[N]`), tên kênh `Channel N` chuyển sang màu trắng sáng `#ffffff`.
+  * Các khung nhãn khác giữ màu nền tối `#1b1b1c` và tên kênh màu xám `#9d9da4`.
+  * Thuật toán Magnetic Snap tự động gán `self.active_inspect_channel = N`, ưu tiên hút nam châm vào các sườn xung của kênh `N`.
+
+### 9.3. Đồng Bộ Phân Hệ Device Settings & Measurements
+* **Device Settings Card:** Tự động gọi `combo_ch.setCurrentIndex(N)`. Kỹ sư chỉ cần click vào sóng để chọn kênh trigger mà không cần mở danh sách chọn thủ công.
+* **Measurements Card:** Tự động gọi `combo_meas_ch.setCurrentIndex(N)`. Cập nhật tức thì 7 chỉ số đo đạc thời gian thực và đổi màu tiêu đề thẻ theo màu kênh `N`.
+
+### 9.4. Đề Xuất Kiến Trúc Xử Lý Bảng Dữ Liệu (Data Table Handling)
+
+Để giải quyết câu hỏi kiến trúc cốt lõi: *"Khi người dùng chọn kênh, Bảng Dữ Liệu (Data Table) ở góc dưới bên phải nên phản ứng như thế nào cho chuẩn xác và chuyên nghiệp nhất?"*, hệ thống đề xuất **3 phương án kiến trúc**:
+
+#### 🌟 Phương Án 1 (Khuyến nghị chuẩn công nghiệp - "Smart Dual-Mode Data Table"):
+* **Bản chất:** Bảng dữ liệu tự động chuyển đổi chế độ hiển thị linh hoạt tùy theo việc kênh được chọn có gắn Protocol Analyzer hay là kênh số logic thông thường:
+  1. **Nếu Kênh N có gắn Analyzer (UART / I2C / SPI):**
+     * Tiêu đề bảng: `Data Table - UART (CHN)` hoặc `I2C (CHN)`.
+     * Cột dữ liệu (5 cột): `[Marker] [Type] [Start Time] [Duration] [Decoded Data / ASCII]`.
+     * Tương tác: Click vào dòng packet $\rightarrow$ Khung nhìn phóng to (zoom) trọn vẹn gói tin đó.
+  2. **Nếu Kênh N KHÔNG có Analyzer (Kênh logic thô, ví dụ xung Clock, PWM, chân ngắt, Chip Select):**
+     * Tiêu đề bảng: `Transition Edge List (CHN)` (Bảng danh sách thời điểm chuyển mức logic).
+     * Cột dữ liệu (5 cột):
+       * `#`: Số thứ tự sườn xung ($1, 2, 3\dots$).
+       * `Edge`: Cạnh xung (`↑ RISING` màu xanh lá hoặc `↓ FALLING` màu cam).
+       * `Timestamp`: Mốc thời gian xuất hiện sườn xung ($t$).
+       * `Δt (Pulse)`: Khoảng thời gian từ sườn xung trước tới sườn xung này (độ rộng mức xung logic).
+       * `Frequency`: Tần số chu kỳ tương ứng $f = 1 / (2 \cdot \Delta t)$ hoặc $1/\Delta t$.
+     * Tương tác: Click vào bất kỳ sườn xung nào trong bảng $\rightarrow$ Viewport tự động căn giữa (Pan to Center) sườn xung đó trên màn hình với vạch chỉ báo rõ ràng!
+* **Ưu điểm vượt trội:** Tận dụng 100% không gian bảng Data Table cho mọi kênh; giúp kỹ sư phần cứng phân tích chi tiết từng sườn xung GPIO/PWM bất thường (glitch, jitter) mà không máy đo nào tầm giá này có được.
+
+#### Phương Án 2 ("Protocol Filter Only"):
+* Bảng dữ liệu chỉ phục vụ Protocol Analyzer.
+* Khi chọn Kênh N: Nếu kênh N có Analyzer thì hiện bảng dữ liệu của kênh N; nếu không có Analyzer thì làm mờ bảng và hiện thông báo: `No Protocol Analyzer attached to CHN. Click '•••' to attach UART/I2C/SPI.`
+* **Đánh giá:** Đơn giản nhưng để trống lãng phí không gian bảng khi đo các kênh GPIO/PWM thông thường.
+
+#### Phương Án 3 ("Tab Switcher: Packets vs Transitions"):
+* Đặt 2 tab cố định phía trên bảng: Tab `Protocol Packets` và Tab `Transitions List`.
+* Khi chọn kênh: Người dùng có thể chủ động chuyển qua lại giữa xem gói tin giải mã và xem danh sách sườn xung của kênh đó.
+* **Đánh giá:** Tốt, nhưng tốn thêm một hàng tab chuyển đổi trên Drawer Panel vốn có chiều rộng giới hạn (310 px).
+
+---
+
+## 10. Quy Chuẩn Kiểm Thử Cho Tính Năng Đồng Bộ Kênh Tác Vụ
+
+Mọi cập nhật mã nguồn liên quan đến đồng bộ kênh phải vượt qua bài kiểm thử tự động trong `software/tests/test_active_channel_sync.py`:
+1. **Kiểm thử Click Label Sync:** Mô phỏng click vào khung nhãn Kênh 2 $\rightarrow$ Xác nhận `active_channel = 2`, `combo_ch` chọn CH2, `combo_meas_ch` chọn CH2, và khung nhãn 2 được highlight.
+2. **Kiểm thử Click Waveform Track Sync:** Mô phỏng click vào tọa độ Y thuộc Track Kênh 4 $\rightarrow$ Xác nhận toàn bộ hệ thống đồng bộ về CH4.
+3. **Kiểm thử Data Table Dual-Mode:**
+   * Khi chọn CH0 (có UART): Bảng hiển thị 14 dòng ký tự UART.
+   * Khi chọn CH1 (xung thô không có UART): Bảng tự động nạp danh sách Transition Edges của CH1 với đầy đủ cột Timestamp, Edge (↑/↓) và Δt.
+4. **Kiểm thử Điều Hướng 2 Chiều Transitions:** Click vào dòng sườn xung thứ 5 trong bảng Transitions $\rightarrow$ Khung nhìn Viewport tự động cuộn đến đúng mốc thời gian của sườn xung đó.

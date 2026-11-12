@@ -25,7 +25,7 @@ import pyqtgraph as pg
 
 from software.gui import theme as T
 from software.gui.logic_client import LogicAnalyzerClient
-from software.gui.waveform_widget import WaveformWidget, format_si_time
+from software.gui.waveform_widget import WaveformWidget, format_si_time, format_si_freq
 from software.decoders.uart_decoder import UARTDecoder
 from software.decoders.i2c_decoder import I2CDecoder
 from software.decoders.spi_decoder import SPIDecoder
@@ -192,6 +192,10 @@ class MainWindow(QtWidgets.QMainWindow):
             self.ch_checks.append(chk)
 
         # Khởi tạo giao diện
+        self.active_channel: int = 0
+        self.data_table_mode: str = "protocol"
+        self._syncing_channel: bool = False
+
         self._init_layout()
         self._init_menu_bar()
         self._update_capture_mode_ui()
@@ -202,6 +206,9 @@ class MainWindow(QtWidgets.QMainWindow):
         # Kết nối tín hiệu Quick Measure Tool & Point Inspector Hover Timestamp
         self.waveform.sigQuickMeasureState.connect(self._on_quick_measure_state)
         self.waveform.sigHoverTimestamp.connect(self._on_hover_timestamp)
+        # Kết nối tín hiệu đồng bộ Kênh Tác Vụ Toàn Diện (Active Channel Sync)
+        self.waveform.sigChannelSelected.connect(self._on_channel_selected)
+        self._on_channel_selected(0, source="init")
 
         # Backward compatibility aliases
         self.plot_widget = self.waveform.plot_widget
@@ -613,6 +620,7 @@ class MainWindow(QtWidgets.QMainWindow):
         for i in range(8):
             self.combo_ch.addItem(f"CH{i} (D{i})", i)
         self.combo_ch.setCurrentIndex(0)
+        self.combo_ch.currentIndexChanged.connect(lambda idx: self._on_channel_selected(idx, source="combo_ch"))
 
         self.combo_mode = QtWidgets.QComboBox()
         self.combo_mode.addItem("Free-run (No Trigger)", 0)
@@ -673,7 +681,7 @@ class MainWindow(QtWidgets.QMainWindow):
         for i in range(8):
             self.combo_meas_ch.addItem(f"CH{i} (D{i})", i)
         self.combo_meas_ch.setCurrentIndex(0)
-        self.combo_meas_ch.currentIndexChanged.connect(self._update_automated_measurements)
+        self.combo_meas_ch.currentIndexChanged.connect(lambda idx: self._on_channel_selected(idx, source="combo_meas_ch"))
 
         self.btn_close_meas = QtWidgets.QPushButton("✕")
         self.btn_close_meas.setToolTip("Collapse Section")
@@ -754,9 +762,9 @@ class MainWindow(QtWidgets.QMainWindow):
 
         # 4. Phần Data Table
         d_header = QtWidgets.QHBoxLayout()
-        d_title = QtWidgets.QLabel(f"Data &nbsp;<span style='color:{T.ACCENT_START}'>✔</span>")
-        d_title.setStyleSheet("font-family: 'Roboto', sans-serif; font-size: 16px; font-weight: 500; color: #e0e0e0; background: transparent; border: none;")
-        d_header.addWidget(d_title)
+        self.lbl_data_title = QtWidgets.QLabel(f"Data &nbsp;<span style='color:{T.ACCENT_START}'>✔</span>")
+        self.lbl_data_title.setStyleSheet("font-family: 'Roboto', sans-serif; font-size: 16px; font-weight: 500; color: #e0e0e0; background: transparent; border: none;")
+        d_header.addWidget(self.lbl_data_title)
         d_header.addStretch(1)
 
         # Switcher Data View: Table [▦] vs Terminal [>_]
@@ -1409,6 +1417,8 @@ class MainWindow(QtWidgets.QMainWindow):
             self.current_data = data
             self.waveform.render_data(data)
             self._redecode_current_analyzer()
+            self._update_data_table_for_channel(self.active_channel)
+            self._update_automated_measurements()
             self.lbl_status.setText(f"Viewing {self.tab_sessions.tabText(index)}: Ready")
         else:
             self.current_data = None
@@ -1417,6 +1427,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 self.txt_uart_decoded.clear()
             if hasattr(self, "table_uart_packets"):
                 self.table_uart_packets.setRowCount(0)
+            self._update_automated_measurements()
             self.lbl_status.setText(f"{self.tab_sessions.tabText(index)}: Ready for capture")
 
     # =========================================================================
@@ -1785,6 +1796,9 @@ class MainWindow(QtWidgets.QMainWindow):
         # Tự động giải mã lại theo analyzer hiện hành mà người dùng đã chọn
         self._redecode_current_analyzer()
 
+        # Cập nhật Bảng Dữ Liệu theo kênh đang kích hoạt (Smart Dual-Mode)
+        self._update_data_table_for_channel(self.active_channel)
+
         # Tự động tính toán đo đạc thông số kỹ thuật (Automated Measurements)
         self._update_automated_measurements()
 
@@ -1800,6 +1814,8 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _populate_packet_table(self, rows: List[Dict[str, Any]], marker_color: str):
         """Điền dữ liệu 5 cột vào bảng Data Table."""
+        if getattr(self, "data_table_mode", "protocol") != "protocol":
+            return
         self.table_uart_packets.setRowCount(0)
         self.table_uart_packets.setRowCount(len(rows))
         for r, row in enumerate(rows):
@@ -1874,7 +1890,7 @@ class MainWindow(QtWidgets.QMainWindow):
         q = query.strip().lower()
         for r in range(self.table_uart_packets.rowCount()):
             match = False
-            for c in range(1, self.table_uart_packets.columnCount()):
+            for c in range(self.table_uart_packets.columnCount()):
                 item = self.table_uart_packets.item(r, c)
                 if item and (q in item.text().lower() or (item.toolTip() and q in item.toolTip().lower())):
                     match = True
@@ -1882,16 +1898,25 @@ class MainWindow(QtWidgets.QMainWindow):
             self.table_uart_packets.setRowHidden(r, not match and len(q) > 0)
 
     def _on_table_row_clicked(self, row: int, col: int):
-        """Khi bấm vào một hàng trong bảng, phóng to và căn giữa byte đó trên sóng."""
-        item = self.table_uart_packets.item(row, 1)
-        if item:
-            data = item.data(QtCore.Qt.UserRole)
-            if data:
-                t_start_abs, t_stop_abs = data
-                self.waveform.zoom_to_window(t_start_abs, t_stop_abs)
+        """Khi bấm vào một hàng trong bảng, phóng to và căn giữa byte đó trên sóng (hoặc pan tới sườn xung)."""
+        if getattr(self, "data_table_mode", "protocol") == "transitions":
+            item = self.table_uart_packets.item(row, col)
+            if not item:
+                item = self.table_uart_packets.item(row, 0)
+            if item:
+                t_target = item.data(QtCore.Qt.UserRole)
+                if t_target is not None:
+                    self.waveform.pan_to_time(float(t_target))
+        else:
+            item = self.table_uart_packets.item(row, 1)
+            if item:
+                data = item.data(QtCore.Qt.UserRole)
+                if data:
+                    t_start_abs, t_stop_abs = data
+                    self.waveform.zoom_to_window(t_start_abs, t_stop_abs)
 
     def _on_table_selection_changed(self):
-        """Khi điều hướng bằng bàn phím (mũi tên lên/xuống), tự động pan căn giữa gói tin."""
+        """Khi điều hướng bằng bàn phím (mũi tên lên/xuống), tự động pan căn giữa gói tin hoặc sườn xung."""
         rows = self.table_uart_packets.selectionModel().selectedRows()
         if rows:
             r = rows[0].row()
@@ -1914,14 +1939,180 @@ class MainWindow(QtWidgets.QMainWindow):
             if hasattr(self, "right_panel") and not self.right_panel.isVisible():
                 self.right_panel.setVisible(True)
 
+    def _on_channel_selected(self, ch: int, source: str = "waveform"):
+        """
+        Đồng bộ kênh tác vụ toàn diện (Unified Active Channel Synchronization):
+        1. Device Settings: combo_ch = CHN
+        2. Measurements: combo_meas_ch = CHN, cập nhật chỉ số đo & màu sắc
+        3. Waveform Viewport: highlight khung nhãn Kênh N, gán active_inspect_channel
+        4. Data Table: Tự thích ứng Dual-Mode (Packets nếu có Analyzer, Transitions nếu sóng số thô)
+        """
+        if ch < 0 or ch >= 8:
+            return
+
+        if getattr(self, "_syncing_channel", False):
+            return
+
+        self._syncing_channel = True
+        try:
+            self.active_channel = ch
+
+            # 1. Đồng bộ Device Settings (Trigger channel)
+            if hasattr(self, "combo_ch"):
+                if self.combo_ch.currentIndex() != ch:
+                    self.combo_ch.blockSignals(True)
+                    self.combo_ch.setCurrentIndex(ch)
+                    self.combo_ch.blockSignals(False)
+
+            # 2. Đồng bộ Measurements Card
+            if hasattr(self, "combo_meas_ch"):
+                if self.combo_meas_ch.currentIndex() != ch:
+                    self.combo_meas_ch.blockSignals(True)
+                    self.combo_meas_ch.setCurrentIndex(ch)
+                    self.combo_meas_ch.blockSignals(False)
+            self._update_automated_measurements()
+
+            # 3. Đồng bộ Waveform Viewport
+            if hasattr(self, "waveform"):
+                self.waveform.set_active_channel(ch)
+
+            # 4. Đồng bộ Bảng dữ liệu Data Table (Smart Dual-Mode)
+            self._update_data_table_for_channel(ch)
+
+        finally:
+            self._syncing_channel = False
+
+    def _update_data_table_for_channel(self, ch: int):
+        """
+        Cập nhật Bảng Dữ Liệu theo trường phái Smart Dual-Mode:
+        - Nếu Kênh ch có Protocol Analyzer: Chế độ 'protocol' (hiển thị packets giải mã, click -> zoom to byte)
+        - Nếu Kênh ch KHÔNG có Analyzer: Chế độ 'transitions' (hiển thị danh sách sườn xung #, Edge, Time, Δt, freq; click -> pan to center)
+        """
+        if not hasattr(self, "table_uart_packets"):
+            return
+
+        active_analyzers = getattr(self.waveform, "active_analyzer_channels", {0})
+        has_analyzer = (ch in active_analyzers)
+
+        if has_analyzer:
+            self.data_table_mode = "protocol"
+            analyzer_name = getattr(self, "current_analyzer", "uart").upper()
+            if hasattr(self, "lbl_data_title"):
+                self.lbl_data_title.setText(f"Data ({analyzer_name} D{ch}) &nbsp;<span style='color:{T.ACCENT_START}'>✔</span>")
+
+            # Cấu hình 5 cột Protocol Packets
+            self.table_uart_packets.setColumnCount(5)
+            self.table_uart_packets.setHorizontalHeaderLabels(["", "Type", "Start", "Duration", "Data"])
+            self.table_uart_packets.setColumnWidth(0, 20)
+            self.table_uart_packets.setColumnWidth(1, 44)
+            self.table_uart_packets.setColumnWidth(2, 62)
+            self.table_uart_packets.setColumnWidth(3, 62)
+            self.table_uart_packets.horizontalHeader().setSectionResizeMode(4, QtWidgets.QHeaderView.Stretch)
+
+            # Giải mã lại và điền bảng dữ liệu nếu có capture
+            if self.current_data:
+                self._redecode_current_analyzer()
+            else:
+                self.table_uart_packets.setRowCount(0)
+                if hasattr(self, "txt_uart_decoded"):
+                    self.txt_uart_decoded.clear()
+        else:
+            self.data_table_mode = "transitions"
+            ch_color = T.CHANNEL_COLORS[ch] if 0 <= ch < 8 else "#e0e0e0"
+            if hasattr(self, "lbl_data_title"):
+                self.lbl_data_title.setText(f"<span style='color:{ch_color}'>■</span> &nbsp;Transitions (D{ch})")
+
+            # Cấu hình 5 cột Transitions List
+            self.table_uart_packets.setColumnCount(5)
+            self.table_uart_packets.setHorizontalHeaderLabels(["#", "Edge", "Timestamp", "Δt (Pulse)", "Frequency"])
+            self.table_uart_packets.setColumnWidth(0, 36)
+            self.table_uart_packets.setColumnWidth(1, 72)
+            self.table_uart_packets.setColumnWidth(2, 70)
+            self.table_uart_packets.setColumnWidth(3, 64)
+            self.table_uart_packets.horizontalHeader().setSectionResizeMode(4, QtWidgets.QHeaderView.Stretch)
+
+            if not self.current_data or not hasattr(self, "waveform"):
+                self.table_uart_packets.setRowCount(0)
+                if hasattr(self, "txt_uart_decoded"):
+                    self.txt_uart_decoded.setPlainText(f"Ready. Waiting for capture on Channel {ch}.")
+                return
+
+            transitions = self.waveform.get_channel_transitions(ch, max_count=512)
+            self.table_uart_packets.setRowCount(len(transitions))
+
+            term_lines = [f"=== Channel {ch} Transitions Log ===", f"Total transition edges: {len(transitions)}"]
+            for r, trans in enumerate(transitions):
+                t_s = trans["time_s"]
+
+                # Col 0: #
+                it_num = QtWidgets.QTableWidgetItem(str(trans["index"]))
+                it_num.setTextAlignment(QtCore.Qt.AlignCenter)
+                it_num.setData(QtCore.Qt.UserRole, t_s)
+                self.table_uart_packets.setItem(r, 0, it_num)
+
+                # Col 1: Edge (↑ RISING / ↓ FALLING)
+                it_edge = QtWidgets.QTableWidgetItem(trans["edge_str"])
+                it_edge.setForeground(QtGui.QBrush(QtGui.QColor(trans["edge_color"])))
+                it_edge.setTextAlignment(QtCore.Qt.AlignLeft | QtCore.Qt.AlignVCenter)
+                it_edge.setData(QtCore.Qt.UserRole, t_s)
+                self.table_uart_packets.setItem(r, 1, it_edge)
+
+                # Col 2: Timestamp
+                t_str = f"{t_s * 1e6:.1f} µs" if abs(t_s) < 1e-3 else f"{t_s * 1e3:.2f} ms"
+                it_t = QtWidgets.QTableWidgetItem(t_str)
+                it_t.setTextAlignment(QtCore.Qt.AlignLeft | QtCore.Qt.AlignVCenter)
+                it_t.setData(QtCore.Qt.UserRole, t_s)
+                self.table_uart_packets.setItem(r, 2, it_t)
+
+                # Col 3: Δt (Pulse)
+                dt = trans.get("delta_t")
+                dt_str = f"{dt * 1e6:.2f} µs" if (dt is not None and dt < 1e-3) else (f"{dt * 1e3:.2f} ms" if dt is not None else "--")
+                it_dt = QtWidgets.QTableWidgetItem(dt_str)
+                it_dt.setTextAlignment(QtCore.Qt.AlignLeft | QtCore.Qt.AlignVCenter)
+                it_dt.setData(QtCore.Qt.UserRole, t_s)
+                self.table_uart_packets.setItem(r, 3, it_dt)
+
+                # Col 4: Frequency
+                freq = trans.get("freq")
+                freq_str = format_si_freq(freq) if (freq is not None and freq > 0) else "--"
+                it_freq = QtWidgets.QTableWidgetItem(freq_str)
+                it_freq.setTextAlignment(QtCore.Qt.AlignLeft | QtCore.Qt.AlignVCenter)
+                it_freq.setData(QtCore.Qt.UserRole, t_s)
+                self.table_uart_packets.setItem(r, 4, it_freq)
+
+                if r < 50:
+                    term_lines.append(f"#{trans['index']:<4} {trans['edge_str']:<10} t={t_str:<10} Δt={dt_str:<10} f={freq_str}")
+
+            if hasattr(self, "txt_uart_decoded"):
+                if len(transitions) > 50:
+                    term_lines.append(f"... ({len(transitions) - 50} more transitions in table)")
+                self.txt_uart_decoded.setPlainText("\n".join(term_lines))
+
     def _update_automated_measurements(self):
         """Tính toán và cập nhật các chỉ số đo đạc tự động cho kênh đang chọn."""
         if not hasattr(self, "card_measurements"):
             return
+        ch = self.combo_meas_ch.currentIndex() if hasattr(self, "combo_meas_ch") else 0
+        if ch < 0 or ch >= 8:
+            ch = 0
+
+        # Đổi màu tiêu đề theo màu kênh
+        ch_color = T.CHANNEL_COLORS[ch] if 0 <= ch < 8 else "#e0e0e0"
+        if hasattr(self, "lbl_meas_title"):
+            self.lbl_meas_title.setText(f"<span style='color:{ch_color}'>■</span> &nbsp;Measurements (D{ch})")
+
         if not self.current_data or "channels" not in self.current_data:
+            if hasattr(self, "lbl_m_freq"):
+                self.lbl_m_freq.setText("--")
+                self.lbl_m_period.setText("--")
+                self.lbl_m_duty.setText("--")
+                self.lbl_m_thigh.setText("--")
+                self.lbl_m_tlow.setText("--")
+                self.lbl_m_trans.setText("--")
+                self.lbl_m_pulse.setText("--")
             return
-        ch = self.combo_meas_ch.currentIndex()
-        if ch < 0 or ch >= len(self.current_data["channels"]):
+
+        if ch >= len(self.current_data["channels"]):
             return
 
         if hasattr(self, "waveform"):
@@ -1941,17 +2132,12 @@ class MainWindow(QtWidgets.QMainWindow):
         self.lbl_m_trans.setText(fmt["transitions"])
         self.lbl_m_pulse.setText(fmt["min_pulse"])
 
-        # Đổi màu tiêu đề theo màu kênh
-        ch_color = T.CHANNEL_COLORS[ch]
-        self.lbl_meas_title.setText(f"<span style='color:{ch_color}'>■</span> &nbsp;Measurements (D{ch})")
-
     def _on_meas_autodetect(self):
         """Tự động tìm và chọn kênh có nhiều xung chuyển mức nhất."""
         if not self.current_data or "channels" not in self.current_data:
             return
         best_ch = find_most_active_channel(self.current_data["channels"])
-        self.combo_meas_ch.setCurrentIndex(best_ch)
-        self._update_automated_measurements()
+        self._on_channel_selected(best_ch, source="autodetect")
 
     def _toggle_measurements_card(self):
         """Ẩn/hiện thẻ Card Measurements trong Drawer Panel."""
@@ -1968,13 +2154,12 @@ class MainWindow(QtWidgets.QMainWindow):
     def _show_measurements_for_channel(self, ch: int):
         """Mở thẻ đo đạc và chọn kênh chỉ định (từ context menu trên waveform)."""
         if 0 <= ch < 8:
-            self.combo_meas_ch.setCurrentIndex(ch)
+            self._on_channel_selected(ch, source="measurements")
             if hasattr(self, "card_measurements"):
                 self.card_measurements.setVisible(True)
             if hasattr(self, "right_panel") and not self.right_panel.isVisible():
                 self.drawer_open = True
                 self.right_panel.setVisible(True)
-            self._update_automated_measurements()
             self._update_switcher_styles()
 
     def _on_channel_name_changed(self, ch: int):
@@ -2034,6 +2219,7 @@ class MainWindow(QtWidgets.QMainWindow):
             )
             self.waveform.set_analyzer_channel(0, "Async Serial", T.DECODE_UART_BG)
             self._decode_uart()
+            self._update_data_table_for_channel(self.active_channel)
         elif chosen == act_i2c:
             self.current_analyzer = "i2c"
             self.lbl_ana_item.setText(
@@ -2042,6 +2228,7 @@ class MainWindow(QtWidgets.QMainWindow):
             )
             self.waveform.set_analyzer_channel(2, "I2C - SDA", T.DECODE_I2C_BG)
             self._decode_i2c()
+            self._update_data_table_for_channel(self.active_channel)
         elif chosen == act_spi:
             self.current_analyzer = "spi"
             self.lbl_ana_item.setText(
@@ -2050,6 +2237,7 @@ class MainWindow(QtWidgets.QMainWindow):
             )
             self.waveform.set_analyzer_channel(4, "SPI - MOSI", "#53a9fd")
             self._decode_spi()
+            self._update_data_table_for_channel(self.active_channel)
         elif chosen == act_more:
             QtWidgets.QMessageBox.information(
                 self, "Protocol Analyzers",

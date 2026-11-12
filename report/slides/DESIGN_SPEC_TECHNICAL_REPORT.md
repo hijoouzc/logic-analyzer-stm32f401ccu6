@@ -32,7 +32,7 @@
 - **Timer ARR Table:** 6 MHz (ARR=13), 3 MHz (ARR=27), 2 MHz (ARR=41), 1 MHz (ARR=83), 500 kHz (ARR=167), 200 kHz (ARR=419), 100 kHz (ARR=839), 50 kHz (ARR=1679), 10 kHz (ARR=8399).
 - **Trigger Alignment & Unrolling:** Đọc thanh ghi $write\_pos = (32768 - NDTR) \pmod{32768}$; xoay vòng mảng từ `write_pos` đưa điểm trigger danh định về cố định tại $t_{6554}$ (đúng 20% bộ đệm).
 - **Packet Format:** Khung 32.776 Bytes (7B Header + 32.768B Data + 1B Checksum XOR), phân đoạn truyền tối đa 512B/khối qua USB CDC kèm Watchdog 100 ms chống treo MCU.
-- **Verification Status:** Đã kiểm chứng 100% trên kit thật WeAct Black Pill (Ping/Pong, Khung 32.776B, Loopback UART 115.2 kbps trên Ch0, Bắt trigger 6554 không jitter); đo tải 6 MHz và xung 200V thuộc mốc tiếp theo.
+- **Verification Status:** Đã kiểm chứng 100% trên kit thật WeAct Black Pill (Ping/Pong, Khung 32.776B, Loopback UART 115.2 kbps trên Ch0, Bắt trigger đúng mẫu 6554 với Jitter bất định = 0 mẫu); đo tải 6 MHz và xung 200V thuộc mốc tiếp theo.
 
 ---
 
@@ -162,8 +162,8 @@ USB chunk 512B + WDT 100ms Chốt write_pos = 32K-NDTR FSM -> POST_SAMPLING
     - Ping/Pong: `Verified` (Firmware v1.0.0)
     - Khung truyền 32.776B & USB 4096B: `Verified` (Truyền 0.062s, Checksum XOR khớp 100%)
     - Loopback Kênh 0 (PA9 $\rightarrow$ PA0): `Verified` (90 transitions, giải mã chuẩn 'TEST_LA_2026\r\n')
-    - Bắt cạnh Trigger & Jitter: `Verified` (Bắt đúng mẫu 6554, sai số Jitter = 0 mẫu)
-    - Chú thích: Đã kiểm chứng 100% PASS trên kit thật; trễ ngắt ISR đạt 18 clock cycles.
+    - Bắt cạnh Trigger & Jitter: `Verified` (Bắt đúng mẫu 6554, Jitter bất định = 0 mẫu)
+    - Chú thích: Đã kiểm chứng 100% PASS trên kit thật; trễ ISR cố định 18 clock cycles (~1 mẫu @ 6 MHz).
 - **Speaker Notes (50s):**
   > "Phần firmware được thiết kế để lấy mẫu đều đặn và không làm nghẽn CPU. Timer 1 phát nhịp để DMA tự động chuyển byte từ cổng GPIO vào mảng 32 KiB trong RAM. Timer 2 đếm đủ 80% số mẫu sau trigger thì kích hoạt ngắt để dừng lấy mẫu, sau đó sắp xếp lại mảng để đưa mẫu cũ nhất về đầu và điểm trigger về đúng vị trí danh định. Khối thu thập dữ liệu chạy hoàn toàn tự động bằng phần cứng; module phát xung UART loopback chỉ dùng để tự kiểm tra. Bằng script Python tự động, nhóm đã kiểm tra thành công việc bắt tay kết nối, tính toàn vẹn của gói tin 32 KiB và đọc chuẩn luồng ký tự UART 115.2 kbps trên Kênh 0. Xin lưu ý 6 MHz là tần số cấu hình timer; việc đo tải thực tế và đo trễ ngắt đang được nhóm tiến hành. Sau đây là phần mềm máy tính."
 
