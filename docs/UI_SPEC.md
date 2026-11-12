@@ -198,11 +198,44 @@ Bên cạnh thao tác kéo thả thước đo A & B truyền thống, hệ thố
 
 ---
 
+### 7.4. Cơ Chế Hút Ranh Giới Nhịp Bit Giao Thức (Analyzer-Aware Snapping)
+
+Giải quyết bài toán đo đạc trên **chuỗi nhiều bit cùng mức logic (ví dụ chuỗi `1111` hoặc `0000`)** khi điện áp giữ nguyên đường thẳng tắp và không có sườn xung vật lý ($\Delta(\text{channel}) = 0$):
+
+```text
+Điện áp:       ┌────────────────────────────────────────────────────────┐
+               │    Bit 0 (1)   │    Bit 1 (1)   │    Bit 2 (1)   │ ...     │
+               └────────────────┴────────────────┴────────────────┴─────────
+Ranh giới:     ▲                ▲                ▲                ▲
+               │                │                │                │
+            Start Edge    t_start+1*Tbit   t_start+2*Tbit   t_start+3*Tbit
+          (Sườn xung thật) (Ranh giới ảo 1) (Ranh giới ảo 2) (Ranh giới ảo 3)
+                 │                │                │                │
+               [Cursor A]   [Cursor B Hút]  [Cursor B Hút]   [Cursor B Hút]
+               (Snap dính)   (Snap dính!)    (Snap dính!)     (Snap dính!)
+```
+
+1. **Nguyên tắc phân biệt hai chế độ (Theo chuẩn Saleae Logic 2 & Sigrok PulseView):**
+   * **Khi KHÔNG có Protocol Analyzer:** Trên các đoạn sóng phẳng lì (không có sườn xung $\Delta \ne 0$), con trỏ di chuyển hoàn toàn tự do (Free Movement), tuyệt đối không tự ý suy đoán tạo ra điểm hút ảo (tránh hiện tượng "khựng ma" làm phiền người đo).
+   * **Khi CÓ Protocol Analyzer (UART, I2C, SPI):** Hệ thống tự động trích xuất các mốc thời gian logic của giao thức (Protocol Timing Boundaries) từ bộ giải mã:
+     * *Với UART (8-N-1):* Ranh giới từng bit nhịp $k \cdot T_{\text{bit}}$ với $k = 0, 1, 2, \dots, 9$ (Start bit, 8 Data bits $D_0 \dots D_7$, Stop bit):
+       $$t_{\text{bit\_boundary}}(k) = \frac{\text{start\_edge} + k \cdot T_{\text{bit}} - \text{trig\_offset}}{f_s}$$
+     * *Với I2C:* Mốc thời gian điều kiện START, ranh giới byte Address, Read/Write bit, ACK/NACK bit, Data bytes, và điều kiện STOP.
+     * *Với SPI:* Ranh giới bắt đầu/kết thúc từng byte truyền nhận trên MOSI và MISO.
+2. **Hợp nhất danh sách Snap (Unified Snap List):**
+   * Mảng ranh giới nhịp bit `decoder_edges[ch]` được hợp nhất vào danh sách điểm hút của kênh tương ứng.
+   * Khi người dùng kéo Cursor B qua chuỗi `1111` trên kênh UART, con trỏ sẽ **tự động hút dính (khựng nam châm) tại đúng điểm kết thúc của Bit 1** ($t = t_{\text{start}} + 1 \times T_{\text{bit}}$), hiển thị đúng boong $\Delta t = T_{\text{bit}}$ (ví dụ $8.680\,\mu\text{s}$ ở 115200 bps).
+
+---
+
 ## 8. Quy Chuẩn Kiểm Thử Tự Động Cho Hệ Thống Thước Đo Thông Minh
 
 Mọi thay đổi mã nguồn liên quan đến thước đo bắt buộc phải vượt qua bộ kiểm thử tự động `software/tests/test_smart_cursors.py`:
-1. **Kiểm thử Snap:** Đặt cursor lệch sườn xung 10px $\rightarrow$ Vị trí cursor phải tự động nhảy trùng khít với $t_{\text{edge}}$.
-2. **Kiểm thử Free Movement:** Đặt cursor lệch sườn xung 25px ($> 15\text{px}$) $\rightarrow$ Vị trí cursor giữ nguyên tọa độ tự do, không bị hút nhầm.
-3. **Kiểm thử Phím tắt `M` (2-Click Measure):** Kích hoạt chế độ đo bằng phím `M`, mô phỏng 2 sự kiện click chuột trái $\rightarrow$ Cursors A và B phải được ghim chính xác tại 2 mốc và tính đúng $\Delta t$.
-4. **Kiểm thử Phím `Escape`:** Kích hoạt chế độ đo rồi bấm `Escape` $\rightarrow$ Trạng thái phải quay về thông thường, không bị kẹt chuột chữ thập.
-5. **Kiểm thử hồi quy:** 100% PASS trên `test_auto_repeat.py`, `test_gui_integration.py` và `test_phase2_commercial.py`.
+1. **Kiểm thử Snap:** Đặt cursor lệch sườn xung 8px $\rightarrow$ Vị trí cursor phải tự động nhảy trùng khít với $t_{\text{edge}}$.
+2. **Kiểm thử Free Movement:** Đặt cursor lệch sườn xung 25px ($> 15\text{px}$) trong vùng phẳng $\rightarrow$ Vị trí cursor giữ nguyên tọa độ tự do, không bị hút nhầm.
+3. **Kiểm thử Ưu tiên Kênh:** Hover kênh nào thì ưu tiên hút sườn xung trên kênh đó.
+4. **Kiểm thử Phím tắt `M` (2-Click Measure):** Kích hoạt chế độ đo bằng phím `M`, mô phỏng 2 sự kiện click chuột trái $\rightarrow$ Cursors A và B phải được ghim chính xác tại 2 mốc và tính đúng $\Delta t$.
+5. **Kiểm thử Phím `Escape`:** Kích hoạt chế độ đo rồi bấm `Escape` $\rightarrow$ Trạng thái phải quay về thông thường, không bị kẹt chuột chữ thập.
+6. **Kiểm thử Point Inspector:** Rê chuột trên sóng phát tín hiệu thời gian thực và số thứ tự mẫu.
+7. **Kiểm thử Analyzer-Aware Snapping trên chuỗi phẳng `1111`:** Khi có UART Decoder, kéo cursor trên chuỗi `1111` phẳng lì (không có sườn xung vật lý) $\rightarrow$ Vị trí cursor phải tự động hút dính chính xác vào ranh giới bit thứ 1 ($t_{\text{start}} + 1 \times T_{\text{bit}}$), đo đúng $\Delta t = T_{\text{bit}}$.
+8. **Kiểm thử hồi quy:** 100% PASS trên `test_auto_repeat.py`, `test_gui_integration.py`, `test_phase2_commercial.py` và `test_corner_cases_comprehensive.py`.

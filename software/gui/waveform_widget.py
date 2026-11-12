@@ -492,6 +492,7 @@ class WaveformWidget(QtWidgets.QWidget):
         self.snap_enabled: bool = True
         self.snap_radius_px: float = 15.0
         self.channel_edges: Dict[int, np.ndarray] = {i: np.array([], dtype=np.float64) for i in range(8)}
+        self.decoder_edges: Dict[int, np.ndarray] = {i: np.array([], dtype=np.float64) for i in range(8)}
         self.all_edges: np.ndarray = np.array([], dtype=np.float64)
         self.current_time_axis: Optional[np.ndarray] = None
         self.hovered_channel: int = -1
@@ -1264,15 +1265,29 @@ class WaveformWidget(QtWidgets.QWidget):
             p2 = self.vb.mapViewToDevice(QtCore.QPointF(t_cand, 0))
             return abs(p2.x() - p1.x())
 
+        def _get_combined_edges(ch: Optional[int]) -> np.ndarray:
+            """Hợp nhất sườn xung phần cứng và ranh giới nhịp bit của Decoder (UI_SPEC 7.4)."""
+            if ch is not None and 0 <= ch < 8:
+                hw = self.channel_edges.get(ch, np.array([]))
+                dec = self.decoder_edges.get(ch, np.array([]))
+                if len(hw) > 0 and len(dec) > 0:
+                    return np.unique(np.concatenate([hw, dec]))
+                return hw if len(hw) > 0 else dec
+            else:
+                all_dec = [arr for arr in self.decoder_edges.values() if len(arr) > 0]
+                if all_dec:
+                    return np.unique(np.concatenate([self.all_edges] + all_dec))
+                return self.all_edges
+
         # Xây dựng danh sách ưu tiên tìm kiếm
         priority_targets: List[Tuple[Optional[int], np.ndarray]] = []
         if preferred_ch is not None and 0 <= preferred_ch < 8:
-            priority_targets.append((preferred_ch, self.channel_edges.get(preferred_ch, np.array([]))))
+            priority_targets.append((preferred_ch, _get_combined_edges(preferred_ch)))
 
         if self.active_inspect_channel != preferred_ch and 0 <= self.active_inspect_channel < 8:
-            priority_targets.append((self.active_inspect_channel, self.channel_edges.get(self.active_inspect_channel, np.array([]))))
+            priority_targets.append((self.active_inspect_channel, _get_combined_edges(self.active_inspect_channel)))
 
-        priority_targets.append((None, self.all_edges))
+        priority_targets.append((None, _get_combined_edges(None)))
 
         for ch_target, edges in priority_targets:
             if edges is None or len(edges) == 0:
@@ -1291,12 +1306,12 @@ class WaveformWidget(QtWidgets.QWidget):
             best_edge = min(candidates, key=lambda cand: abs(cand - t))
             px_dist = _calc_px_dist(best_edge)
             if px_dist <= threshold_px:
-                # Nếu matched kênh là None (tìm từ all_edges), truy hồi xem sườn này thuộc kênh nào
+                # Nếu matched kênh là None (tìm từ all_edges), truy hồi xem mốc này thuộc kênh nào
                 resolved_ch = ch_target
                 if resolved_ch is None:
                     for c in range(8):
-                        c_edges = self.channel_edges.get(c, np.array([]))
-                        if len(c_edges) > 0 and np.any(np.abs(c_edges - best_edge) < 1e-12):
+                        c_comb = _get_combined_edges(c)
+                        if len(c_comb) > 0 and np.any(np.abs(c_comb - best_edge) < 1e-12):
                             resolved_ch = c
                             break
                 return float(best_edge), resolved_ch, float(px_dist)
@@ -1687,6 +1702,7 @@ class WaveformWidget(QtWidgets.QWidget):
         bit_dots_x: List[float] = []
         bit_dots_y: List[float] = []
         bit_dots_brushes: List[QtGui.QBrush] = []
+        uart_dec_edges: List[float] = []
 
         max_bubbles = min(len(frames), 256)
 
@@ -1699,6 +1715,12 @@ class WaveformWidget(QtWidgets.QWidget):
             # Dịch -0.5 mẫu để khớp tuyệt đối với cạnh dọc của stepMode="right" (vẽ tại idx - 1)
             edge_idx = start_idx - 0.5
             bit_len_idx = (stop_idx - start_idx) / 9.5
+
+            # Trích xuất ranh giới từng nhịp bit phục vụ Analyzer-Aware Snapping (UI_SPEC 7.4)
+            # Bao gồm mép Start bit, ranh giới 8 Data bits D0..D7 và Stop bit (k = 0..10)
+            for k in range(11):
+                t_bound = (edge_idx + k * bit_len_idx - trig_offset) / sample_rate
+                uart_dec_edges.append(t_bound)
 
             # Chuẩn công nghiệp: Bong bóng dữ liệu ôm đúng 8 Data Bits (1.0 * T_bit đến 9.0 * T_bit)
             # sao cho mép trái bong bóng bắt đầu ngay sau Start bit và mép phải kết thúc ngay trước Stop bit
@@ -1771,6 +1793,12 @@ class WaveformWidget(QtWidgets.QWidget):
             self.bit_dots_item.setZValue(35)
             self.vb.addItem(self.bit_dots_item)
 
+        # Lưu trữ các ranh giới nhịp bit phục vụ Analyzer-Aware Snapping (UI_SPEC 7.4)
+        active_ch = 0
+        if hasattr(self, "active_analyzer_channels") and self.active_analyzer_channels:
+            active_ch = list(self.active_analyzer_channels)[0]
+        self.decoder_edges[active_ch] = np.unique(np.array(uart_dec_edges, dtype=np.float64)) if uart_dec_edges else np.array([], dtype=np.float64)
+
     def render_i2c_decorations(self, frames: List[Dict[str, Any]], sample_rate: float, trig_offset: int):
         """Vẽ khối giải mã I2C dạng chữ nhật (#4060c0) trên dòng sóng Kênh 2 (SDA)."""
         self.clear_decoder_decorations()
@@ -1785,6 +1813,7 @@ class WaveformWidget(QtWidgets.QWidget):
         bubble_h = 18.0
         bubble_top = y0 + max(1.0, (decoder_space - bubble_h) / 2.0)
 
+        i2c_dec_edges: List[float] = []
         max_bubbles = min(len(frames), 256)
         for f in frames[:max_bubbles]:
             s_idx = f.get("start_sample", 0)
@@ -1794,6 +1823,7 @@ class WaveformWidget(QtWidgets.QWidget):
 
             t_start = (s_idx - eff_offset) / sample_rate
             t_stop = (e_idx - eff_offset) / sample_rate
+            i2c_dec_edges.extend([t_start, t_stop])
 
             if "START" in f_type:
                 txt = "START"
@@ -1823,6 +1853,8 @@ class WaveformWidget(QtWidgets.QWidget):
             self.vb.addItem(bubble)
             self.decode_items.append(bubble)
 
+        self.decoder_edges[ch_target] = np.unique(np.array(i2c_dec_edges, dtype=np.float64)) if i2c_dec_edges else np.array([], dtype=np.float64)
+
     def render_spi_decorations(self, frames: List[Dict[str, Any]], sample_rate: float, trig_offset: int):
         """Vẽ khối giải mã SPI dạng chữ nhật (#53a9fd) trên Kênh 4 (MOSI)."""
         self.clear_decoder_decorations()
@@ -1837,6 +1869,7 @@ class WaveformWidget(QtWidgets.QWidget):
         bubble_h = 18.0
         bubble_top = y0 + max(1.0, (decoder_space - bubble_h) / 2.0)
 
+        spi_dec_edges: List[float] = []
         max_bubbles = min(len(frames), 256)
         for f in frames[:max_bubbles]:
             s_idx = f.get("start_sample", 0)
@@ -1846,6 +1879,7 @@ class WaveformWidget(QtWidgets.QWidget):
 
             t_start = (s_idx - eff_offset) / sample_rate
             t_stop = (e_idx - eff_offset) / sample_rate
+            spi_dec_edges.extend([t_start, t_stop])
 
             txt = f"M:0x{mv:02X}"
             tip = f"SPI Byte\nMOSI: 0x{mv:02X}\nMISO: 0x{sv:02X}\nStart: {format_si_time(t_start)}"
@@ -1866,6 +1900,8 @@ class WaveformWidget(QtWidgets.QWidget):
             self.vb.addItem(bubble)
             self.decode_items.append(bubble)
 
+        self.decoder_edges[ch_target] = np.unique(np.array(spi_dec_edges, dtype=np.float64)) if spi_dec_edges else np.array([], dtype=np.float64)
+
     def set_analyzer_channel(self, ch: int, name: str, color: str = T.DECODE_UART_BG):
         """Thiết lập kênh số có analyzer và tăng chiều cao 1.35x."""
         self.active_analyzer_channels = {ch}
@@ -1879,6 +1915,7 @@ class WaveformWidget(QtWidgets.QWidget):
 
     def clear_decoder_decorations(self):
         """Xóa toàn bộ các bong bóng chú thích và chấm bit trên đồ thị."""
+        self.decoder_edges = {i: np.array([], dtype=np.float64) for i in range(8)}
         for item in self.decode_items:
             try:
                 self.vb.removeItem(item)

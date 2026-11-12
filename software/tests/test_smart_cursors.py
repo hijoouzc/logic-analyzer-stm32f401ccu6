@@ -250,6 +250,64 @@ class TestSmartCursorsAndQuickMeasure(unittest.TestCase):
         self.assertEqual(last_idx, expected_idx, "Số thứ tự mẫu phải được tính đúng")
         print(f"-> [PASS] Test 7: Point Inspector Hover Timestamp chính xác: T = {format_si_time(last_t)} | #{last_idx} | 0x{last_val:02X}!")
 
+    def test_08_analyzer_aware_snapping_on_flat_sequence(self):
+        """Kiểm tra cơ chế Analyzer-Aware Snapping trên chuỗi phẳng 1111 (UI_SPEC Mục 7.4)."""
+        wf = self.win.waveform
+        baud = 115200
+        samples_per_bit = self.fs / baud  # ~8.68 mẫu ở 1MHz
+        t_bit = 1.0 / baud                # ~8.680 µs
+
+        # Tạo 1 frame UART gửi byte 0xFF:
+        # Start bit = 0, Data bits = 11111111 (phẳng lì 8 bit), Stop bit = 1
+        start_edge = 10000
+        stop_sample = int(start_edge + samples_per_bit * 9.5)
+        mock_uart_frame = {
+            "char": "\\xFF",
+            "byte_val": 0xFF,
+            "start_sample": start_edge,
+            "stop_sample": stop_sample,
+            "data_start_sample": start_edge + samples_per_bit * 1.0 - 0.5,
+            "data_end_sample": start_edge + samples_per_bit * 9.0 - 0.5,
+            "bit_centers": [start_edge + (1.5 + b) * samples_per_bit - 0.5 for b in range(8)],
+            "bit_samples": [1] * 8
+        }
+
+        # 1. Khi chưa có Analyzer: decoder_edges rỗng
+        wf.clear_decoder_decorations()
+        self.assertEqual(len(wf.decoder_edges[0]), 0)
+
+        # 2. Kích hoạt vẽ Analyzer UART
+        wf.render_uart_decorations([mock_uart_frame], self.fs, self.trig_offset)
+
+        # Zoom vào frame UART để mỗi bit có độ rộng ~28 pixels trên màn hình
+        t_start_frame = (start_edge - self.trig_offset) / self.fs
+        wf.plot_widget.setXRange(t_start_frame - 0.00005, t_start_frame + 0.00015, padding=0)
+        QtWidgets.QApplication.processEvents()
+
+        self.assertIn(0, wf.decoder_edges)
+        self.assertGreater(len(wf.decoder_edges[0]), 0, "Decoder edges phải chứa các ranh giới nhịp bit")
+
+        # Ranh giới kết thúc Bit 0 / bắt đầu Bit 1 (k = 2):
+        expected_bit0_end = float(wf.decoder_edges[0][2])
+
+        # Thử tìm kiếm điểm snap khi rê chuột gần ranh giới bit (lệch 6px)
+        p_bound = wf.vb.mapViewToDevice(QtCore.QPointF(expected_bit0_end, 0))
+        p_near = QtCore.QPointF(p_bound.x() + 6.0, p_bound.y())
+        t_near = float(wf.vb.mapDeviceToView(p_near).x())
+
+        t_snap, matched_ch, px_dist = wf.find_closest_edge(t_near, preferred_ch=0, max_px=15.0)
+
+        self.assertIsNotNone(t_snap, "Cursor phải hút dính vào ranh giới nhịp bit của UART dù sóng phẳng lì")
+        self.assertAlmostEqual(t_snap, expected_bit0_end, places=8, msg="Thời gian snap phải khớp chính xác với ranh giới bit của UART")
+        self.assertLessEqual(px_dist, 15.0)
+
+        # Ranh giới kết thúc Bit 1 (k = 3):
+        expected_bit1_end = float(wf.decoder_edges[0][3])
+        measured_bit_width = abs(expected_bit1_end - expected_bit0_end)
+        self.assertAlmostEqual(measured_bit_width, t_bit, delta=1e-6, msg="Độ rộng 1 bit phải xấp xỉ 8.68 µs (115200 bps)")
+
+        print(f"-> [PASS] Test 8: Analyzer-Aware Snapping trên chuỗi 1111 phẳng lì thành công! Độ rộng 1 bit = {format_si_time(measured_bit_width)} (~{format_si_freq(1.0/measured_bit_width)})!")
+
 
 def main():
     print("=" * 60)
